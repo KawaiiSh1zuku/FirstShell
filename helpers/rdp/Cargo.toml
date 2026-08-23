@@ -1,0 +1,19 @@
+[package]
+name = "firstshell-rdp-helper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+firstshell-rdp-protocol = { path = "../../crates/rdp-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

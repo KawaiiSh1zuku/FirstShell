@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "ipc": {
+    "eventCount": 10000,
+    "payloadBytes": [256, 1024, 8192, 65536],
+    "workload": "alternating terminal output and monitor samples"
+  },
+  "ssh": {
+    "logicalSessions": 10,
+    "interactivePayloadBytes": 1024,
+    "bulkChannels": 2,
+    "timeoutSeconds": 10
+  },
+  "sftp": {
+    "fileSizesBytes": [1048576, 67108864, 1073741824],
+    "generator": "zero-filled deterministic stream",
+    "hash": "SHA-256"
+  },
+  "monitoring": {
+    "sampleRateHz": 10,
+    "durationSeconds": 60,
+    "series": ["cpu", "memory", "disk", "network"]
+  }
+}

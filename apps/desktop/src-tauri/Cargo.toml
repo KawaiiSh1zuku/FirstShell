@@ -1,0 +1,22 @@
+[package]
+name = "firstshell-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+firstshell-application = { path = "../../../crates/application" }
+firstshell-domain = { path = "../../../crates/domain" }
+firstshell-security = { path = "../../../crates/security" }
+firstshell-session = { path = "../../../crates/session" }
+firstshell-ssh = { path = "../../../crates/ssh" }
+firstshell-storage = { path = "../../../crates/storage" }
+serde.workspace = true
+tauri.workspace = true
+
+[lints]
+workspace = true

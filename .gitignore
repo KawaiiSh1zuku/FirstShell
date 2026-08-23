@@ -1,0 +1,16 @@
+/target/
+/node_modules/
+/apps/desktop/dist/
+/apps/desktop/node_modules/
+/apps/desktop/*.tsbuildinfo
+/apps/desktop/src-tauri/gen/schemas/
+/.idea/
+/.vscode/
+*.log
+*.db
+*.db-shm
+*.db-wal
+
+# Clean-room reference inputs and generated reverse-engineering artifacts.
+/finalshell.jar
+/work/finalshell-reference/artifacts/

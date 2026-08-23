@@ -1,0 +1,32 @@
+{
+  "snapshotDate": "2026-08-23",
+  "role": "M0 Windows reference hardware",
+  "computer": {
+    "manufacturer": "LENOVO",
+    "model": "82JW",
+    "memoryBytes": 34204610560
+  },
+  "cpu": {
+    "name": "AMD Ryzen 5 5600H with Radeon Graphics",
+    "physicalCores": 6,
+    "logicalProcessors": 12,
+    "maxClockMHz": 3301
+  },
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "adapterMemoryBytes": 4293918720,
+    "driverVersion": "32.0.15.6614"
+  },
+  "operatingSystem": {
+    "name": "Microsoft Windows 10 Pro",
+    "version": "10.0.19045",
+    "build": "19045"
+  },
+  "measurementRules": {
+    "powerMode": "AC power, best performance",
+    "buildProfile": "release",
+    "warmupRuns": 1,
+    "measuredRuns": 5,
+    "backgroundLoad": "close unrelated CPU, disk, and network intensive applications"
+  }
+}

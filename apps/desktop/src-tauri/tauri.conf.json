@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "FirstShell",
+  "version": "0.1.0",
+  "identifier": "dev.firstshell.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'"
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "FirstShell",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 900,
+        "minHeight": 600
+      }
+    ]
+  },
+  "bundle": {
+    "active": false
+  }
+}

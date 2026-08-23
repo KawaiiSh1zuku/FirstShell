@@ -1,0 +1,20 @@
+[package]
+name = "firstshell-ssh"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+firstshell-session = { path = "../session" }
+russh.workspace = true
+russh-sftp.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+rand.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "firstshell-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
