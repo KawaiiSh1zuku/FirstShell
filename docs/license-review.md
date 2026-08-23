@@ -8,6 +8,7 @@
 | --- | --- | --- | --- |
 | 桌面框架 | Tauri 2 | MIT OR Apache-2.0 | 与 AGPL-3.0-only 兼容 |
 | Web UI | React、Vite | MIT | 与 AGPL-3.0-only 兼容 |
+| UI 与测试 | `lucide-react`、Vitest、Testing Library、jsdom | MIT；间接依赖含 BSD-2-Clause、BlueOak-1.0.0 | 与 AGPL-3.0-only 兼容，BSD/BlueOak 文本进入发布 NOTICE |
 | SSH/SFTP | `russh`、`russh-sftp` | Apache-2.0 | 与 AGPL-3.0-only 兼容，保留 NOTICE 要求 |
 | 密码学 | RustCrypto XChaCha20-Poly1305、HKDF、SHA-2 | MIT OR Apache-2.0 | 与 AGPL-3.0-only 兼容 |
 | 本地凭据 | `keyring` 及平台后端 | MIT OR Apache-2.0 | 与 AGPL-3.0-only 兼容 |
@@ -31,6 +32,6 @@ FreeRDP 的 Apache-2.0 结论来自上游 LICENSE；实际打包前还必须审�
 ## 发布义务
 
 - 分发桌面端、`syncd` 或 `relayd` 时提供对应 AGPL-3.0 源码获取方式。
-- 生成第三方 NOTICE/SBOM，保留 Apache、MIT、BSD、MPL、Unicode 和其他适用文本。
+- 生成第三方 NOTICE/SBOM，保留 Apache、MIT、BSD、BlueOak、MPL、Unicode 和其他适用文本。
 - 禁止引入无许可证、仅源代码可见、自定义非商业条款、SSPL、BUSL 或与 AGPL 不兼容的依赖。
 - 候选依赖只有在真正加入锁文件并重新通过自动与人工审查后才算获准使用。

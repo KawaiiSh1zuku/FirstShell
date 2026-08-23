@@ -25,6 +25,16 @@
     ]
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "FirstShell",
+    "category": "DeveloperTool",
+    "shortDescription": "Secure local-first remote connection workspace",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"]
+      }
+    }
   }
 }

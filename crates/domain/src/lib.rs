@@ -1,38 +1,53 @@
 //! Core `FirstShell` types and invariants with no infrastructure dependencies.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-/// Stable identifier for a connection profile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ConnectionId(Uuid);
+macro_rules! entity_id {
+    ($name:ident, $description:literal) => {
+        #[doc = $description]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(Uuid);
 
-impl ConnectionId {
-    /// Creates a cryptographically random connection identifier.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
+        impl $name {
+            /// Creates a cryptographically random identifier.
+            #[must_use]
+            pub fn new() -> Self {
+                Self(Uuid::new_v4())
+            }
+
+            /// Returns the canonical hyphenated identifier.
+            #[must_use]
+            pub fn as_uuid(self) -> Uuid {
+                self.0
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(formatter)
+            }
+        }
+    };
 }
 
-impl Default for ConnectionId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Stable, non-secret connection metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConnectionProfile {
-    /// Stable record identifier.
-    pub id: ConnectionId,
-    /// Monotonic optimistic-concurrency revision.
-    pub revision: u64,
-    /// Connection transport category.
-    pub kind: ConnectionKind,
-}
+entity_id!(ConnectionId, "Stable identifier for a connection profile.");
+entity_id!(FolderId, "Stable identifier for a connection folder.");
+entity_id!(ProxyId, "Stable identifier for a proxy profile.");
+entity_id!(
+    TerminalProfileId,
+    "Stable identifier for a terminal profile."
+);
 
 /// Supported top-level connection transports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +61,251 @@ pub enum ConnectionKind {
     Local,
 }
 
+/// Supported proxy transports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyKind {
+    /// No proxy.
+    Direct,
+    /// `SOCKS5` proxy.
+    Socks5,
+    /// `HTTP CONNECT` proxy.
+    HttpConnect,
+    /// Resolve the system proxy once when opening the session.
+    System,
+}
+
+/// Connection-tree folder with decrypted display fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    /// Stable record identifier.
+    pub id: FolderId,
+    /// Optional parent folder.
+    pub parent_id: Option<FolderId>,
+    /// Monotonic optimistic-concurrency revision.
+    pub revision: u64,
+    /// Stable ordering within the parent.
+    pub sort_order: i64,
+    /// User-visible name, available only while unlocked.
+    pub name: String,
+    /// Optional private notes.
+    pub notes: String,
+}
+
+/// Input used to create or update a folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderInput {
+    /// Optional parent folder.
+    pub parent_id: Option<FolderId>,
+    /// Stable ordering within the parent.
+    pub sort_order: i64,
+    /// User-visible name.
+    pub name: String,
+    /// Optional private notes.
+    pub notes: String,
+}
+
+/// Decrypted connection profile. Authentication secrets are referenced, never embedded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionProfile {
+    /// Stable record identifier.
+    pub id: ConnectionId,
+    /// Optional containing folder.
+    pub folder_id: Option<FolderId>,
+    /// Monotonic optimistic-concurrency revision.
+    pub revision: u64,
+    /// Stable ordering within the folder.
+    pub sort_order: i64,
+    /// Connection transport category.
+    pub kind: ConnectionKind,
+    /// User-visible name.
+    pub name: String,
+    /// Host name or address. Empty for local terminals.
+    pub host: String,
+    /// Remote port. Zero for local terminals.
+    pub port: u16,
+    /// Remote account name.
+    pub username: String,
+    /// Optional proxy profile reference.
+    pub proxy_id: Option<ProxyId>,
+    /// Optional terminal profile reference.
+    pub terminal_profile_id: Option<TerminalProfileId>,
+    /// Searchable private tags.
+    pub tags: Vec<String>,
+    /// Optional private notes.
+    pub notes: String,
+}
+
+/// Input used to create or update a connection profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionInput {
+    /// Optional containing folder.
+    pub folder_id: Option<FolderId>,
+    /// Stable ordering within the folder.
+    pub sort_order: i64,
+    /// Connection transport category.
+    pub kind: ConnectionKind,
+    /// User-visible name.
+    pub name: String,
+    /// Host name or address. Empty for local terminals.
+    pub host: String,
+    /// Remote port. Zero for local terminals.
+    pub port: u16,
+    /// Remote account name.
+    pub username: String,
+    /// Optional proxy profile reference.
+    pub proxy_id: Option<ProxyId>,
+    /// Optional terminal profile reference.
+    pub terminal_profile_id: Option<TerminalProfileId>,
+    /// Searchable private tags.
+    pub tags: Vec<String>,
+    /// Optional private notes.
+    pub notes: String,
+}
+
+/// Decrypted proxy profile without stored credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyProfile {
+    /// Stable record identifier.
+    pub id: ProxyId,
+    /// Monotonic optimistic-concurrency revision.
+    pub revision: u64,
+    /// Proxy transport category.
+    pub kind: ProxyKind,
+    /// User-visible name.
+    pub name: String,
+    /// Proxy host. Empty for direct/system profiles.
+    pub host: String,
+    /// Proxy port. Zero for direct/system profiles.
+    pub port: u16,
+    /// Optional proxy username; its password remains in the OS keyring.
+    pub username: String,
+}
+
+/// Input used to create or update a proxy profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyInput {
+    /// Proxy transport category.
+    pub kind: ProxyKind,
+    /// User-visible name.
+    pub name: String,
+    /// Proxy host.
+    pub host: String,
+    /// Proxy port.
+    pub port: u16,
+    /// Optional proxy username.
+    pub username: String,
+}
+
+/// Decrypted terminal appearance and behavior profile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalProfile {
+    /// Stable record identifier.
+    pub id: TerminalProfileId,
+    /// Monotonic optimistic-concurrency revision.
+    pub revision: u64,
+    /// User-visible name.
+    pub name: String,
+    /// Terminal font family.
+    pub font_family: String,
+    /// Terminal font size in logical pixels.
+    pub font_size: f32,
+    /// Theme identifier interpreted by the terminal adapter.
+    pub theme: String,
+    /// Maximum in-memory scrollback lines.
+    pub scrollback: u32,
+}
+
+/// Input used to create or update a terminal profile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalProfileInput {
+    /// User-visible name.
+    pub name: String,
+    /// Terminal font family.
+    pub font_family: String,
+    /// Terminal font size in logical pixels.
+    pub font_size: f32,
+    /// Theme identifier interpreted by the terminal adapter.
+    pub theme: String,
+    /// Maximum in-memory scrollback lines.
+    pub scrollback: u32,
+}
+
+/// Decrypted entities sent to the workspace after unlock.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSnapshot {
+    /// Ordered visible folders.
+    pub folders: Vec<Folder>,
+    /// Ordered visible connections.
+    pub connections: Vec<ConnectionProfile>,
+    /// Visible proxy profiles.
+    pub proxies: Vec<ProxyProfile>,
+    /// Visible terminal profiles.
+    pub terminal_profiles: Vec<TerminalProfile>,
+}
+
+/// Persisted workspace panel geometry with bounded logical-pixel values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceLayout {
+    /// Left connection-tree width.
+    pub left_width: u16,
+    /// Right inspector width.
+    pub right_width: u16,
+    /// Bottom activity panel height.
+    pub bottom_height: u16,
+    /// Whether the bottom activity panel is expanded.
+    pub bottom_open: bool,
+}
+
+impl Default for WorkspaceLayout {
+    fn default() -> Self {
+        Self {
+            left_width: 256,
+            right_width: 288,
+            bottom_height: 180,
+            bottom_open: true,
+        }
+    }
+}
+
+/// Search result category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchResultKind {
+    /// Folder match.
+    Folder,
+    /// Connection match.
+    Connection,
+    /// Proxy match.
+    Proxy,
+    /// Terminal profile match.
+    TerminalProfile,
+}
+
+/// One bounded in-memory search result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    /// Result category.
+    pub kind: SearchResultKind,
+    /// Stable entity identifier.
+    pub id: String,
+    /// Primary display label.
+    pub label: String,
+    /// Secondary match context.
+    pub detail: String,
+}
+
 /// Stable error codes safe to cross the desktop IPC boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -54,6 +314,10 @@ pub enum ErrorCode {
     InvalidInput,
     /// Requested operation is invalid for the current state.
     InvalidState,
+    /// Requested object does not exist.
+    NotFound,
+    /// Optimistic revision or unique constraint conflicted.
+    Conflict,
     /// A bounded queue cannot accept more work.
     ResourceExhausted,
     /// The operation exceeded its deadline.
@@ -64,6 +328,7 @@ pub enum ErrorCode {
 
 /// Error payload intended for UI display and IPC serialization.
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[error("{code:?}: {message}")]
 pub struct PublicError {
     /// Stable machine-readable code.
@@ -91,8 +356,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn connection_id_should_be_unique_for_new_values() {
+    fn typed_ids_should_be_unique_for_new_values() {
         assert_ne!(ConnectionId::new(), ConnectionId::new());
+        assert_ne!(FolderId::new(), FolderId::new());
     }
 
     #[test]

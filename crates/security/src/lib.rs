@@ -1,7 +1,10 @@
 //! Vault key lifecycle, OS keyring access, and authenticated record encryption.
 
 use std::fmt;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
+use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
@@ -16,6 +19,13 @@ pub const VAULT_KEY_LEN: usize = 32;
 pub const MAX_SEALED_BYTES: usize = 16 * 1024 * 1024;
 const NONCE_LEN: usize = 24;
 const PAYLOAD_VERSION: u16 = 1;
+const EXPORT_VERSION: u16 = 1;
+const RECOVERY_SLOT_VERSION: u16 = 1;
+const EXPORT_SALT_LEN: usize = 16;
+const EXPORT_MEMORY_KIB: u32 = 64 * 1024;
+const EXPORT_ITERATIONS: u32 = 3;
+const EXPORT_PARALLELISM: u32 = 1;
+const MAX_EXPORT_BYTES: usize = 512 * 1024 * 1024;
 
 /// Root key for local record encryption.
 #[derive(Zeroize, ZeroizeOnDrop)]
@@ -136,6 +146,18 @@ pub enum SecurityError {
     /// The platform credential store rejected an operation.
     #[error("OS keyring operation failed: {0}")]
     Keyring(#[from] keyring::Error),
+    /// The in-memory vault has not been unlocked or was automatically locked.
+    #[error("vault is locked")]
+    VaultLocked,
+    /// The vault session lock was poisoned by a panicking thread.
+    #[error("vault session is unavailable")]
+    VaultSessionUnavailable,
+    /// Export password or recorded KDF parameters are invalid.
+    #[error("invalid export key parameters")]
+    ExportKey,
+    /// Export data exceeds the explicit container boundary.
+    #[error("export payload exceeds {MAX_EXPORT_BYTES} bytes")]
+    ExportTooLarge,
 }
 
 /// Encrypts one sensitive record with a fresh nonce and context-bound subkey.
@@ -264,6 +286,357 @@ impl OsKeyring {
     }
 }
 
+#[derive(Debug)]
+struct VaultSessionState {
+    key: Option<VaultKey>,
+    last_activity: Instant,
+}
+
+/// In-memory vault key owner with monotonic idle-time locking.
+#[derive(Debug)]
+pub struct VaultSession {
+    idle_timeout: Duration,
+    state: Mutex<VaultSessionState>,
+}
+
+impl VaultSession {
+    /// Creates a locked session with an explicit idle timeout.
+    #[must_use]
+    pub fn new(idle_timeout: Duration) -> Self {
+        Self {
+            idle_timeout,
+            state: Mutex::new(VaultSessionState {
+                key: None,
+                last_activity: Instant::now(),
+            }),
+        }
+    }
+
+    /// Replaces any resident key and starts a fresh idle window.
+    ///
+    /// # Errors
+    /// Returns [`SecurityError::VaultSessionUnavailable`] after lock poisoning.
+    pub fn unlock(&self, key: VaultKey) -> Result<(), SecurityError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| SecurityError::VaultSessionUnavailable)?;
+        state.key = Some(key);
+        state.last_activity = Instant::now();
+        Ok(())
+    }
+
+    /// Removes the resident key immediately.
+    ///
+    /// # Errors
+    /// Returns [`SecurityError::VaultSessionUnavailable`] after lock poisoning.
+    pub fn lock(&self) -> Result<(), SecurityError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| SecurityError::VaultSessionUnavailable)?;
+        state.key = None;
+        Ok(())
+    }
+
+    /// Returns whether a key is currently resident.
+    ///
+    /// # Errors
+    /// Returns [`SecurityError::VaultSessionUnavailable`] after lock poisoning.
+    pub fn is_unlocked(&self) -> Result<bool, SecurityError> {
+        self.state
+            .lock()
+            .map(|state| state.key.is_some())
+            .map_err(|_| SecurityError::VaultSessionUnavailable)
+    }
+
+    /// Executes one synchronous operation with the key and refreshes activity.
+    ///
+    /// # Errors
+    /// Returns [`SecurityError::VaultLocked`] when no key is resident, plus any
+    /// error returned by the operation.
+    pub fn with_key<T>(
+        &self,
+        operation: impl FnOnce(&VaultKey) -> Result<T, SecurityError>,
+    ) -> Result<T, SecurityError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| SecurityError::VaultSessionUnavailable)?;
+        let result = operation(state.key.as_ref().ok_or(SecurityError::VaultLocked)?)?;
+        state.last_activity = Instant::now();
+        Ok(result)
+    }
+
+    /// Locks the session when its monotonic idle deadline has elapsed.
+    ///
+    /// Returns true only when a resident key was removed.
+    ///
+    /// # Errors
+    /// Returns [`SecurityError::VaultSessionUnavailable`] after lock poisoning.
+    pub fn lock_if_idle(&self) -> Result<bool, SecurityError> {
+        self.lock_if_idle_at(Instant::now())
+    }
+
+    fn lock_if_idle_at(&self, now: Instant) -> Result<bool, SecurityError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| SecurityError::VaultSessionUnavailable)?;
+        if state.key.is_some()
+            && now.saturating_duration_since(state.last_activity) >= self.idle_timeout
+        {
+            state.key = None;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+/// Versioned Argon2id parameters stored with an encrypted export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportKdf {
+    /// Memory cost in KiB.
+    pub memory_kib: u32,
+    /// Iteration count.
+    pub iterations: u32,
+    /// Lane count.
+    pub parallelism: u32,
+}
+
+/// Password-encrypted, authenticated backup envelope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportEnvelope {
+    /// Container version.
+    pub version: u16,
+    /// Versioned Argon2id parameters.
+    pub kdf: ExportKdf,
+    /// Random KDF salt.
+    pub salt: [u8; EXPORT_SALT_LEN],
+    /// Unique `XChaCha20` nonce.
+    pub nonce: [u8; NONCE_LEN],
+    /// Encrypted backup bytes followed by the authentication tag.
+    pub ciphertext: Vec<u8>,
+}
+
+/// Password-wrapped vault key stored beside the encrypted database.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryKeySlot {
+    /// Slot encoding version.
+    pub version: u16,
+    /// Versioned Argon2id parameters.
+    pub kdf: ExportKdf,
+    /// Random KDF salt.
+    pub salt: [u8; EXPORT_SALT_LEN],
+    /// Unique `XChaCha20` nonce.
+    pub nonce: [u8; NONCE_LEN],
+    /// Wrapped 32-byte vault key followed by its authentication tag.
+    pub wrapped_key: Vec<u8>,
+}
+
+/// Wraps a random vault key with a key derived from the mandatory recovery password.
+///
+/// # Errors
+/// Returns an error for a password outside 12 to 1024 bytes, failed randomness,
+/// KDF, or authenticated encryption.
+pub fn wrap_vault_key(
+    recovery_password: &[u8],
+    vault_id: &str,
+    vault_key: &VaultKey,
+) -> Result<RecoveryKeySlot, SecurityError> {
+    if !(12..=1024).contains(&recovery_password.len()) || vault_id.is_empty() {
+        return Err(SecurityError::ExportKey);
+    }
+    let kdf = default_password_kdf();
+    let mut salt = [0_u8; EXPORT_SALT_LEN];
+    let mut nonce = [0_u8; NONCE_LEN];
+    getrandom::fill(&mut salt).map_err(|error| SecurityError::Random(error.to_string()))?;
+    getrandom::fill(&mut nonce).map_err(|error| SecurityError::Random(error.to_string()))?;
+    let key = derive_export_key(recovery_password, &salt, kdf)?;
+    let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
+        .map_err(|_| SecurityError::CipherInitialization)?;
+    let wrapped_key = cipher
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: vault_key.secret(),
+                aad: &recovery_slot_aad(vault_id, kdf, &salt),
+            },
+        )
+        .map_err(|_| SecurityError::Authentication)?;
+    Ok(RecoveryKeySlot {
+        version: RECOVERY_SLOT_VERSION,
+        kdf,
+        salt,
+        nonce,
+        wrapped_key,
+    })
+}
+
+/// Recovers a vault key from a password slot without exposing partial key bytes.
+///
+/// # Errors
+/// Returns an error for unsupported metadata, unsafe KDF parameters, a wrong
+/// password, a different vault identifier, or modified wrapped key bytes.
+pub fn unwrap_vault_key(
+    recovery_password: &[u8],
+    vault_id: &str,
+    slot: &RecoveryKeySlot,
+) -> Result<VaultKey, SecurityError> {
+    if !(12..=1024).contains(&recovery_password.len())
+        || vault_id.is_empty()
+        || slot.version != RECOVERY_SLOT_VERSION
+        || !valid_export_kdf(slot.kdf)
+        || slot.wrapped_key.len() != VAULT_KEY_LEN + 16
+    {
+        return Err(SecurityError::ExportKey);
+    }
+    let key = derive_export_key(recovery_password, &slot.salt, slot.kdf)?;
+    let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
+        .map_err(|_| SecurityError::CipherInitialization)?;
+    let unwrapped = Zeroizing::new(
+        cipher
+            .decrypt(
+                XNonce::from_slice(&slot.nonce),
+                Payload {
+                    msg: &slot.wrapped_key,
+                    aad: &recovery_slot_aad(vault_id, slot.kdf, &slot.salt),
+                },
+            )
+            .map_err(|_| SecurityError::Authentication)?,
+    );
+    VaultKey::from_secret(unwrapped.as_slice())
+}
+
+/// Encrypts a consistent database snapshot with an independent password key.
+///
+/// # Errors
+/// Returns an error for an empty/oversized password, oversized input, failed
+/// randomness, KDF, or authenticated encryption.
+pub fn seal_export(password: &[u8], plaintext: &[u8]) -> Result<ExportEnvelope, SecurityError> {
+    validate_export_input(password, plaintext.len())?;
+    let kdf = default_password_kdf();
+    let mut salt = [0_u8; EXPORT_SALT_LEN];
+    let mut nonce = [0_u8; NONCE_LEN];
+    getrandom::fill(&mut salt).map_err(|error| SecurityError::Random(error.to_string()))?;
+    getrandom::fill(&mut nonce).map_err(|error| SecurityError::Random(error.to_string()))?;
+    let key = derive_export_key(password, &salt, kdf)?;
+    let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
+        .map_err(|_| SecurityError::CipherInitialization)?;
+    let ciphertext = cipher
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad: &export_aad(kdf, &salt),
+            },
+        )
+        .map_err(|_| SecurityError::Authentication)?;
+    Ok(ExportEnvelope {
+        version: EXPORT_VERSION,
+        kdf,
+        salt,
+        nonce,
+        ciphertext,
+    })
+}
+
+/// Decrypts and authenticates a backup without exposing partial plaintext.
+///
+/// # Errors
+/// Returns an error for unsupported metadata, unsafe KDF parameters, oversized
+/// data, a wrong password, or modified ciphertext.
+pub fn open_export(
+    password: &[u8],
+    envelope: &ExportEnvelope,
+) -> Result<Zeroizing<Vec<u8>>, SecurityError> {
+    validate_export_input(password, envelope.ciphertext.len())?;
+    if envelope.version != EXPORT_VERSION || !valid_export_kdf(envelope.kdf) {
+        return Err(SecurityError::ExportKey);
+    }
+    let key = derive_export_key(password, &envelope.salt, envelope.kdf)?;
+    let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
+        .map_err(|_| SecurityError::CipherInitialization)?;
+    let plaintext = cipher
+        .decrypt(
+            XNonce::from_slice(&envelope.nonce),
+            Payload {
+                msg: &envelope.ciphertext,
+                aad: &export_aad(envelope.kdf, &envelope.salt),
+            },
+        )
+        .map_err(|_| SecurityError::Authentication)?;
+    Ok(Zeroizing::new(plaintext))
+}
+
+fn validate_export_input(password: &[u8], size: usize) -> Result<(), SecurityError> {
+    if password.is_empty() || password.len() > 1024 {
+        return Err(SecurityError::ExportKey);
+    }
+    if size > MAX_EXPORT_BYTES {
+        return Err(SecurityError::ExportTooLarge);
+    }
+    Ok(())
+}
+
+fn valid_export_kdf(kdf: ExportKdf) -> bool {
+    (16 * 1024..=256 * 1024).contains(&kdf.memory_kib)
+        && (1..=10).contains(&kdf.iterations)
+        && (1..=8).contains(&kdf.parallelism)
+}
+
+const fn default_password_kdf() -> ExportKdf {
+    ExportKdf {
+        memory_kib: EXPORT_MEMORY_KIB,
+        iterations: EXPORT_ITERATIONS,
+        parallelism: EXPORT_PARALLELISM,
+    }
+}
+
+fn derive_export_key(
+    password: &[u8],
+    salt: &[u8; EXPORT_SALT_LEN],
+    kdf: ExportKdf,
+) -> Result<Zeroizing<[u8; VAULT_KEY_LEN]>, SecurityError> {
+    if !valid_export_kdf(kdf) {
+        return Err(SecurityError::ExportKey);
+    }
+    let params = Params::new(
+        kdf.memory_kib,
+        kdf.iterations,
+        kdf.parallelism,
+        Some(VAULT_KEY_LEN),
+    )
+    .map_err(|_| SecurityError::ExportKey)?;
+    let mut key = Zeroizing::new([0_u8; VAULT_KEY_LEN]);
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+        .hash_password_into(password, salt, key.as_mut())
+        .map_err(|_| SecurityError::ExportKey)?;
+    Ok(key)
+}
+
+fn export_aad(kdf: ExportKdf, salt: &[u8; EXPORT_SALT_LEN]) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(48);
+    aad.extend_from_slice(b"firstshell.export.v1\0");
+    aad.extend_from_slice(&kdf.memory_kib.to_be_bytes());
+    aad.extend_from_slice(&kdf.iterations.to_be_bytes());
+    aad.extend_from_slice(&kdf.parallelism.to_be_bytes());
+    aad.extend_from_slice(salt);
+    aad
+}
+
+fn recovery_slot_aad(vault_id: &str, kdf: ExportKdf, salt: &[u8; EXPORT_SALT_LEN]) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(64 + vault_id.len());
+    aad.extend_from_slice(b"firstshell.vault-recovery.v1\0");
+    append_field(&mut aad, vault_id.as_bytes());
+    aad.extend_from_slice(&kdf.memory_kib.to_be_bytes());
+    aad.extend_from_slice(&kdf.iterations.to_be_bytes());
+    aad.extend_from_slice(&kdf.parallelism.to_be_bytes());
+    aad.extend_from_slice(salt);
+    aad
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,5 +689,76 @@ mod tests {
         let first = seal_record(&key, context(1), b"same").expect("test encryption must succeed");
         let second = seal_record(&key, context(1), b"same").expect("test encryption must succeed");
         assert_ne!(first.nonce, second.nonce);
+    }
+
+    #[test]
+    fn vault_session_should_lock_after_monotonic_idle_timeout() {
+        let session = VaultSession::new(Duration::from_secs(30));
+        session
+            .unlock(VaultKey::generate().expect("test key must generate"))
+            .expect("session must unlock");
+        let last_activity = session
+            .state
+            .lock()
+            .expect("test mutex must remain available")
+            .last_activity;
+        assert!(
+            session
+                .lock_if_idle_at(last_activity + Duration::from_secs(31))
+                .expect("idle lock must run")
+        );
+        assert!(!session.is_unlocked().expect("state must be readable"));
+    }
+
+    #[test]
+    fn encrypted_export_should_reject_wrong_password_and_tampering() {
+        let envelope = seal_export(b"correct horse battery staple", b"sqlite snapshot")
+            .expect("test export must encrypt");
+        assert_eq!(
+            open_export(b"correct horse battery staple", &envelope)
+                .expect("correct password must decrypt")
+                .as_slice(),
+            b"sqlite snapshot"
+        );
+        assert!(matches!(
+            open_export(b"wrong password", &envelope),
+            Err(SecurityError::Authentication)
+        ));
+
+        let mut modified = envelope;
+        modified.ciphertext[0] ^= 0x40;
+        assert!(matches!(
+            open_export(b"correct horse battery staple", &modified),
+            Err(SecurityError::Authentication)
+        ));
+    }
+
+    #[test]
+    fn recovery_slot_should_restore_the_same_vault_key_after_keyring_loss() {
+        let original = VaultKey::generate().expect("test key must generate");
+        let context = RecordContext {
+            table: "folders",
+            record_id: "folder-1",
+            schema_version: 1,
+            revision: 1,
+            key_version: 1,
+        };
+        let sealed = seal_record(&original, context, b"recoverable").expect("record must encrypt");
+        let slot = wrap_vault_key(b"mandatory recovery password", "vault-1", &original)
+            .expect("key must wrap");
+        drop(original);
+
+        let recovered = unwrap_vault_key(b"mandatory recovery password", "vault-1", &slot)
+            .expect("recovery password must unwrap key");
+        assert_eq!(
+            open_record(&recovered, context, &sealed)
+                .expect("recovered key must decrypt prior record")
+                .as_slice(),
+            b"recoverable"
+        );
+        assert!(matches!(
+            unwrap_vault_key(b"incorrect recovery password", "vault-1", &slot),
+            Err(SecurityError::Authentication)
+        ));
     }
 }

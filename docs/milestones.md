@@ -16,7 +16,7 @@
 | 里程碑 | 目标 | 依赖 | 当前状态 |
 | --- | --- | --- | --- |
 | M0 | 架构冻结与关键技术验证 | 无 | Complete |
-| M1 | 桌面骨架、数据层与安全仓库 | M0 | Not started |
+| M1 | 桌面骨架、数据层与安全仓库 | M0 | Complete |
 | M2 | 可日常使用的 SSH 终端 | M1 | Not started |
 | M3 | SFTP、代理、跳板与隧道 | M2 | Not started |
 | M4 | 主机监控与效率工具 | M3 | Not started |
@@ -64,14 +64,16 @@ M5 的协议和服务端可以在 M2-M4 期间并行开发，但只有覆盖最�
 
 主要交付：
 
-- Tauri capability、CSP、typed command/channel 和统一错误模型。
-- SQLite DB actor、版本化迁移、完整性检查和 online backup。
-- OS keyring、Vault Key、记录级 XChaCha20-Poly1305 加密、自动锁定。
-- 连接、文件夹、代理引用、终端配置的 CRUD 和内存搜索索引。
-- 左侧连接树、中央标签区、右侧与底部可调整面板骨架。
-- 加密导出、验证导入和恢复流程。
+- [x] Tauri capability、CSP、typed command/channel 和统一错误模型。
+- [x] SQLite DB actor、版本化迁移、完整性检查和 online backup。
+- [x] OS keyring、恢复口令 key slot、Vault Key、记录级 XChaCha20-Poly1305 加密、自动锁定。
+- [x] 连接、文件夹、代理引用、终端配置的 CRUD、revision 约束、软删除撤销和内存搜索索引。
+- [x] 左侧连接树、中央标签区、右侧与底部可调整面板骨架，以及浅色/深色/系统应用主题。
+- [x] 独立口令加密导出、验证导入、恢复前 online backup 和事务替换流程。
 
 退出门槛：冷启动与 IPC 达到预算；锁定态不泄露敏感字段；迁移失败可恢复；关键 Tauri 越权测试、密码学测试和 UI 键盘可达性通过。
+
+验收证据：[M1 验收记录](./verification/m1.md)。按项目负责人决定，安装后人工交互、视觉截图与冷启动分布测量合并到 M4 结束后的实机验收；M1 已完成自动化门禁、release EXE 与 NSIS 安装包构建，延期项不作为已通过结论。
 
 ## M2 可日常使用的 SSH 终端
 

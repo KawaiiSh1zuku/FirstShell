@@ -12,9 +12,9 @@
 
 使用 bundled SQLite 和 `rusqlite`，由专用 DB actor 独占连接。启用 WAL、foreign keys、busy timeout 和版本化迁移；应用层通过带类型请求访问，不使用 ORM。
 
-敏感字段存入版本化加密 payload。Vault Key 由 CSPRNG 生成并保存到 OS keyring；每条记录通过 HKDF 派生子密钥，使用 XChaCha20-Poly1305 和包含表、ID、schema、revision 的 AAD。明文字段只保留关系、版本和数据库运行所需索引。
+敏感字段存入版本化加密 payload。Vault Key 由 CSPRNG 生成并保存到 OS keyring，同时由用户恢复口令经 Argon2id 派生的 Recovery Key 加密包装后写入版本化 key slot；每条记录通过 HKDF 派生子密钥，使用 XChaCha20-Poly1305 和包含表、ID、schema、revision 的 AAD。明文字段只保留关系、版本和数据库运行所需索引。
 
-同步使用独立 Sync Key 重新封装规范化对象，不直接上传本地数据库密文。导出同样使用独立 Export Key。
+同步使用独立 Sync Key 重新封装规范化对象，不直接上传本地数据库密文。导出同样使用独立 Export Key。M1 的恢复会先完整验证导入对象并创建 online backup，再在单事务中替换业务记录；它不是未经验证的数据库文件覆盖。
 
 ## 备选方案
 
@@ -27,6 +27,6 @@
 
 ## 结果
 
-正面结果是事务和崩溃一致性优于文件存储，秘密边界可按记录验证，同步服务泄露不等于本地仓库泄露。代价是密文字段无法直接 SQL 搜索，需要解锁后的受限内存索引；密钥轮换、迁移和备份必须有专门流程。
+正面结果是事务和崩溃一致性优于文件存储，秘密边界可按记录验证，同步服务泄露不等于本地仓库泄露，系统密钥环丢失也不等于仓库永久丢失。代价是用户必须妥善保管恢复口令；密文字段无法直接 SQL 搜索，需要解锁后的受限内存索引；密钥轮换、迁移和备份必须有专门流程。软删除撤销会使用删除前 revision 验证旧密文，再以更高 revision 重新加密，不能直接翻转 tombstone 造成 AAD 与 revision 不一致。
 
 如果未来引入 SQLCipher，它只能作为额外的静态介质防护层，不能替代当前记录加密和密钥分离。

@@ -1,5 +1,12 @@
 //! Application ports that keep infrastructure outside the domain boundary.
 
+mod workspace;
+
+pub use workspace::{
+    ExportReceipt, ImportSummary, OsVaultKeyStore, RestoreReceipt, VaultKeyStore, VaultStatus,
+    WorkspacePaths, WorkspaceService,
+};
+
 use async_trait::async_trait;
 use firstshell_domain::{ConnectionId, ConnectionProfile, PublicError};
 

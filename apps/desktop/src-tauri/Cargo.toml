@@ -17,6 +17,7 @@ firstshell-ssh = { path = "../../../crates/ssh" }
 firstshell-storage = { path = "../../../crates/storage" }
 serde.workspace = true
 tauri.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

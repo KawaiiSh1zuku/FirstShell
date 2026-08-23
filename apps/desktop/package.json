@@ -6,19 +6,25 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc -b && vite build",
+    "test": "vitest run",
     "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
+    "lucide-react": "^1.33.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.6",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "latest",
+    "jsdom": "^29.0.0",
     "typescript": "latest",
-    "vite": "8.2.2"
+    "vite": "8.2.2",
+    "vitest": "^4.1.11"
   }
 }

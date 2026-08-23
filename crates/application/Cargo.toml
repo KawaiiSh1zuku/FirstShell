@@ -8,6 +8,16 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 firstshell-domain = { path = "../domain" }
+firstshell-security = { path = "../security" }
+firstshell-storage = { path = "../storage" }
+rmp-serde.workspace = true
+serde.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
