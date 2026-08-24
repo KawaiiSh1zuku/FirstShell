@@ -61,7 +61,7 @@ record_key = HKDF(vault_key, table_name || record_id || key_version)
 
 Vault Key 与 Sync Key 相互独立：本地记录由 Vault Key 保护；进入同步 outbox 前，客户端将规范化对象重新封装为 Sync Key 密文。泄露同步服务数据不能用于解密本地数据库，撤销同步也不要求重写全部本地记录。
 
-M2 不改变 schema version 2。连接加密 payload 新增认证类型、私钥路径、按主机弱算法开关和 OpenSSH 回退开关；终端 payload 新增编码和键位配置。字段使用 serde 默认值兼容 M1 已保存 payload，因此不需要数据库迁移。快速连接只存在于当前前端会话，不写入 SQLite；原生取得的 SSH 秘密只进入 OS keyring 和短期可清零内存，不进入连接 payload。
+M2 不改变 schema version 2。连接加密 payload 新增认证类型、私钥路径、按主机弱算法开关和 OpenSSH 回退开关；终端 payload 新增编码和键位配置。字段使用 serde 默认值兼容 M1 已保存 payload，因此不需要数据库迁移。连接的 `terminalProfileId=null` 表示使用工作区首个终端配置，前端外观与原生编码解析必须采用相同回退；仅当工作区没有终端配置时才使用内置默认值。快速连接只存在于当前前端会话，不写入 SQLite；原生取得的 SSH 秘密只进入 OS keyring 和短期可清零内存，不进入连接 payload。
 
 M3 仍不改变 schema version 2。连接加密 payload 增加有序 `jumpHostIds`，代理加密 payload 增加 `dnsMode`；两者使用 serde 默认值读取旧记录，并在 application 层验证引用、最多四跳和传递循环。代理密码仍只进入 OS keyring。SFTP workspace、隧道、传输任务和拖放批次都是当前进程的 Rust 运行时记录，不创建 `transfer_jobs` 或 `tunnel_profiles` 表；Vault 锁定会取消并清空这些记录，本地绝对路径、remote partial 名和进度不持久化。
 

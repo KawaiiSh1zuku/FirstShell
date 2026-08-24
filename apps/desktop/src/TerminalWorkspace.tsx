@@ -63,7 +63,7 @@ export function TerminalWorkspace(props: TerminalWorkspaceProps) {
           key={connection.id}
           bridge={props.bridge}
           connection={connection}
-          profile={props.profiles.find((value) => value.id === connection.terminalProfileId)}
+          profile={props.profiles.find((value) => value.id === connection.terminalProfileId) ?? (connection.terminalProfileId === null ? props.profiles[0] : undefined)}
           active={connection.id === props.activeConnectionId}
           insertRequest={props.insertRequest?.connectionId === connection.id ? props.insertRequest : null}
           onActivity={props.onActivity}

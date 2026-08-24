@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use firstshell_domain::{
     ConnectionId, ConnectionKind, ErrorCode, ProxyDnsMode as ProfileProxyDnsMode, ProxyId,
     ProxyKind, PublicError, SshAuthenticationKind, TerminalEncoding as ProfileEncoding,
+    TerminalProfile, TerminalProfileId,
 };
 use firstshell_session::{
     LocalShell, LocalTerminalFactory, SessionError, SessionEvent, SessionEventSink, SessionId,
@@ -769,11 +770,10 @@ pub(crate) async fn resolve_ssh_connection(
     if connection.kind != ConnectionKind::Ssh {
         return Err(public(ErrorCode::InvalidState, "connection is not SSH"));
     }
-    let profile = workspace
-        .terminal_profiles
-        .iter()
-        .find(|profile| Some(profile.id) == connection.terminal_profile_id);
-    let encoding = match profile.map(|profile| profile.encoding).unwrap_or_default() {
+    let encoding = match resolve_profile_encoding(
+        &workspace.terminal_profiles,
+        connection.terminal_profile_id,
+    ) {
         ProfileEncoding::Utf8 => TerminalEncoding::Utf8,
         ProfileEncoding::Gb18030 => TerminalEncoding::Gb18030,
         ProfileEncoding::Big5 => TerminalEncoding::Big5,
@@ -794,6 +794,18 @@ pub(crate) async fn resolve_ssh_connection(
             jump_hosts,
         })),
     })
+}
+
+fn resolve_profile_encoding(
+    profiles: &[TerminalProfile],
+    profile_id: Option<TerminalProfileId>,
+) -> ProfileEncoding {
+    match profile_id {
+        Some(id) => profiles.iter().find(|profile| profile.id == id),
+        None => profiles.first(),
+    }
+    .map(|profile| profile.encoding)
+    .unwrap_or_default()
 }
 
 async fn resolve_proxy_route(
@@ -1164,6 +1176,7 @@ fn purge_old_logs(directory: &PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use firstshell_domain::TerminalKeymap;
 
     #[test]
     fn credential_accounts_should_be_scoped_by_connection() {
@@ -1196,5 +1209,36 @@ mod tests {
         assert!(validated_native_secret("secret".to_owned()).is_ok());
         assert!(validated_native_secret(String::new()).is_err());
         assert!(validated_native_secret("x".repeat(MAX_SSH_SECRET_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn default_connections_should_use_the_workspace_default_terminal_profile() {
+        let default_id = TerminalProfileId::new();
+        let alternate_id = TerminalProfileId::new();
+        let profile = |id, name: &str, encoding| TerminalProfile {
+            id,
+            revision: 1,
+            name: name.to_owned(),
+            font_family: "Cascadia Mono".to_owned(),
+            font_size: 14.0,
+            theme: "firstshell-dark".to_owned(),
+            palette: None,
+            scrollback: 10_000,
+            encoding,
+            keymap: TerminalKeymap::Xterm,
+        };
+        let profiles = [
+            profile(default_id, "Default", ProfileEncoding::Big5),
+            profile(alternate_id, "UTF-8", ProfileEncoding::Utf8),
+        ];
+
+        assert_eq!(
+            resolve_profile_encoding(&profiles, None),
+            ProfileEncoding::Big5
+        );
+        assert_eq!(
+            resolve_profile_encoding(&profiles, Some(alternate_id)),
+            ProfileEncoding::Utf8
+        );
     }
 }

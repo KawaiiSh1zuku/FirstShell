@@ -115,6 +115,21 @@ describe("M2 terminal workspace", () => {
     expect(xtermMock.terminalOptions[0]).toMatchObject({ theme: { background: "#123456", brightRed: "#fedcba" } });
   });
 
+  it("applies the workspace default preset to connections using the default profile", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const bridge = createPreviewBridge();
+    const defaultConnection = { ...connection, terminalProfileId: null };
+    const darkProfile = { ...profile, theme: "firstshell-dark" };
+    const lightProfile = { ...profile, revision: 2, theme: "firstshell-light" };
+    const view = render(<TerminalWorkspace bridge={bridge} connections={[defaultConnection]} activeConnectionId={defaultConnection.id} profiles={[darkProfile]} onActivity={() => undefined} onReadySessionsChange={() => undefined} onReadyConnectionsChange={() => undefined} insertRequest={null} />);
+    await screen.findByText("已连接");
+    expect(xtermMock.terminalOptions[0]).toMatchObject({ theme: { background: "#0e100e" } });
+
+    view.rerender(<TerminalWorkspace bridge={bridge} connections={[defaultConnection]} activeConnectionId={defaultConnection.id} profiles={[lightProfile]} onActivity={() => undefined} onReadySessionsChange={() => undefined} onReadyConnectionsChange={() => undefined} insertRequest={null} />);
+    await waitFor(() => expect(xtermMock.terminalOptions).toHaveLength(2));
+    expect(xtermMock.terminalOptions[1]).toMatchObject({ theme: { foreground: "#243128", background: "#f7f9f7" } });
+  });
+
   it("requires explicit approval for pending host-key evidence", async () => {
     vi.stubGlobal("ResizeObserver", MockResizeObserver);
     const bridge = createPreviewBridge();
