@@ -12,6 +12,7 @@ import type {
   TerminalProfile,
   TerminalSize,
 } from "./types";
+import { resolveTerminalTheme } from "./terminalThemes";
 
 interface TerminalWorkspaceProps {
   bridge: WorkspaceBridge;
@@ -20,6 +21,7 @@ interface TerminalWorkspaceProps {
   profiles: TerminalProfile[];
   onActivity(message: string): void;
   onReadyCountChange(count: number): void;
+  onReadyConnectionsChange(connectionIds: string[]): void;
 }
 
 interface PaneModel {
@@ -40,7 +42,12 @@ export function TerminalWorkspace(props: TerminalWorkspaceProps) {
   }, [connectionKey]);
   useEffect(() => {
     props.onReadyCountChange(Object.values(readyCounts).reduce((total, value) => total + value, 0));
-  }, [props.onReadyCountChange, readyCounts]);
+    props.onReadyConnectionsChange(Object.entries(readyCounts).filter(([, count]) => count > 0).map(([id]) => id));
+  }, [props.onReadyConnectionsChange, props.onReadyCountChange, readyCounts]);
+  useEffect(() => () => {
+    props.onReadyCountChange(0);
+    props.onReadyConnectionsChange([]);
+  }, [props.onReadyConnectionsChange, props.onReadyCountChange]);
   return (
     <div className="terminal-tabs-content">
       {props.connections.map((connection) => (
@@ -240,7 +247,7 @@ function TerminalPane({ bridge, paneId, connection, profile, active, canClose, o
       fontFamily: profile?.fontFamily ?? "Cascadia Mono, Consolas, monospace",
       fontSize: profile?.fontSize ?? 14,
       scrollback: profile?.scrollback ?? 10_000,
-      theme: terminalTheme(profile?.theme),
+      theme: resolveTerminalTheme(profile?.theme, profile?.palette),
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
@@ -272,7 +279,7 @@ function TerminalPane({ bridge, paneId, connection, profile, active, canClose, o
       if (sessionId) void bridge.closeTerminal(sessionId).catch(() => undefined);
       onReadyChange(paneId, false);
     };
-  }, [bridge, connect, paneId, profile?.fontFamily, profile?.fontSize, profile?.scrollback, profile?.theme, terminalSize, textEncoder, onReadyChange]);
+  }, [bridge, connect, paneId, profile?.fontFamily, profile?.fontSize, profile?.palette, profile?.scrollback, profile?.theme, terminalSize, textEncoder, onReadyChange]);
 
   useEffect(() => {
     if (!active) return;
@@ -348,12 +355,6 @@ function TerminalPane({ bridge, paneId, connection, profile, active, canClose, o
       {logPath && <div className="logging-indicator"><FileText size={12} />记录中</div>}
     </div>
   );
-}
-
-function terminalTheme(theme: string | undefined) {
-  if (theme === "firstshell-light") return { background: "#f7f9f7", foreground: "#243128", cursor: "#167447", selectionBackground: "#b9dfc8" };
-  if (theme === "high-contrast") return { background: "#000000", foreground: "#ffffff", cursor: "#00ff7f", selectionBackground: "#295f3f" };
-  return { background: "#0e100e", foreground: "#d7ddd8", cursor: "#4fd18a", selectionBackground: "#284734" };
 }
 
 function stateLabel(state: SessionState) {

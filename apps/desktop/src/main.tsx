@@ -83,6 +83,7 @@ interface AppState {
   searchResults: SearchResult[];
   busy: boolean;
   error: string | null;
+  autoUnlockFailed: boolean;
   entityDialog: EntityDialogState;
   settingsOpen: boolean;
   backupOpen: boolean;
@@ -99,7 +100,7 @@ type Action =
 const defaultLayout: WorkspaceLayout = {
   leftWidth: 256,
   rightWidth: 288,
-  bottomHeight: 180,
+  bottomHeight: 260,
   bottomOpen: true,
 };
 
@@ -115,6 +116,7 @@ const initialState: AppState = {
   searchResults: [],
   busy: false,
   error: null,
+  autoUnlockFailed: false,
   entityDialog: null,
   settingsOpen: false,
   backupOpen: false,
@@ -141,6 +143,7 @@ function reducer(state: AppState, action: Action): AppState {
       backupOpen: false,
       quickConnectOpen: false,
       error: null,
+      autoUnlockFailed: false,
       undoDelete: null,
     };
   }
@@ -163,6 +166,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
   const [state, dispatch] = useReducer(reducer, initialState);
   const [themeMode, setThemeMode] = useThemeMode();
   const [readySessions, setReadySessions] = useState(0);
+  const [readyConnectionIds, setReadyConnectionIds] = useState<string[]>([]);
   const addActivity = useCallback((message: string) => dispatch({ type: "activity", message }), []);
   const configureProxyCredential = useCallback(
     (value: ProxyProfile) => bridge.configureProxyCredential(value.id),
@@ -193,7 +197,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
       bridge.loadLayout(),
       bridge.status(),
     ]);
-    dispatch({ type: "patch", value: { snapshot: nextSnapshot, layout, status, error: null } });
+    dispatch({ type: "patch", value: { snapshot: nextSnapshot, layout, status, error: null, autoUnlockFailed: false } });
   }, [bridge]);
 
   useEffect(() => {
@@ -202,8 +206,18 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
       try {
         const status = await bridge.status();
         if (!active) return;
-        dispatch({ type: "patch", value: { status } });
-        if (status.unlocked) await loadWorkspace();
+        if (status.unlocked) {
+          await loadWorkspace();
+        } else if (status.initialized) {
+          try {
+            const snapshot = await bridge.unlock();
+            if (active) await loadWorkspace(snapshot);
+          } catch (error) {
+            if (active) dispatch({ type: "patch", value: { status, error: errorMessage(error), autoUnlockFailed: true } });
+          }
+        } else {
+          dispatch({ type: "patch", value: { status } });
+        }
       } catch (error) {
         if (active) dispatch({ type: "patch", value: { error: errorMessage(error) } });
       }
@@ -346,6 +360,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         <ThemeControl mode={themeMode} onChange={setThemeMode} floating />
         <VaultGate
         status={state.status}
+        initialMode={state.autoUnlockFailed ? "recover" : "unlock"}
         busy={state.busy}
         error={state.error}
         onInitialize={async (password) => {
@@ -480,12 +495,10 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
             })}
             {state.openTabs.length === 0 && <div className="tab-placeholder">工作区</div>}
           </div>
-          {state.openTabs.length > 0 ? <Suspense fallback={<div className="terminal-loading">正在加载终端</div>}><TerminalWorkspace bridge={bridge} connections={state.openTabs.map((id) => allConnections.find((value) => value.id === id)).filter((value): value is ConnectionProfile => Boolean(value))} activeConnectionId={activeConnection?.id ?? null} profiles={snapshot.terminalProfiles} onActivity={addActivity} onReadyCountChange={setReadySessions} /></Suspense> : <WorkspaceOverview snapshot={snapshot} />}
+          {state.openTabs.length > 0 ? <Suspense fallback={<div className="terminal-loading">正在加载终端</div>}><TerminalWorkspace bridge={bridge} connections={state.openTabs.map((id) => allConnections.find((value) => value.id === id)).filter((value): value is ConnectionProfile => Boolean(value))} activeConnectionId={activeConnection?.id ?? null} profiles={snapshot.terminalProfiles} onActivity={addActivity} onReadyCountChange={setReadySessions} onReadyConnectionsChange={setReadyConnectionIds} /></Suspense> : <WorkspaceOverview snapshot={snapshot} />}
         </div>
-        {state.layout.bottomOpen && <>
-          <PanelSeparator orientation="horizontal" label="调整活动面板高度" onPointerDown={(event) => beginResize("bottom", event)} onNudge={(delta) => nudgeLayout("bottom", delta)} />
-          <Suspense fallback={<section className="activity-panel"><div className="empty-list">正在加载文件与网络工具</div></section>}><OperationsWorkspace bridge={bridge} connections={snapshot.connections} activeConnectionId={activeConnection?.id ?? null} activities={state.activities} onActivity={addActivity} onCollapse={() => void saveLayout({ ...state.layout, bottomOpen: false })} /></Suspense>
-        </>}
+        {state.layout.bottomOpen && <PanelSeparator orientation="horizontal" label="调整活动面板高度" onPointerDown={(event) => beginResize("bottom", event)} onNudge={(delta) => nudgeLayout("bottom", delta)} />}
+        <Suspense fallback={state.layout.bottomOpen ? <section className="activity-panel"><div className="empty-list">正在加载文件与网络工具</div></section> : null}><OperationsWorkspace bridge={bridge} connections={snapshot.connections} activeConnectionId={activeConnection?.id ?? null} readyConnectionIds={readyConnectionIds} hidden={!state.layout.bottomOpen} activities={state.activities} onActivity={addActivity} onCollapse={() => void saveLayout({ ...state.layout, bottomOpen: false })} /></Suspense>
       </section>
 
       <PanelSeparator orientation="vertical" label="调整详情面板宽度" onPointerDown={(event) => beginResize("right", event)} onNudge={(delta) => nudgeLayout("right", -delta)} />

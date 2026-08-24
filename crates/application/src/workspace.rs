@@ -854,6 +854,7 @@ impl WorkspaceService {
             font_family: input.font_family.trim().to_owned(),
             font_size: input.font_size,
             theme: input.theme.trim().to_owned(),
+            palette: input.palette,
             scrollback: input.scrollback,
             encoding: input.encoding,
             keymap: input.keymap,
@@ -893,6 +894,7 @@ impl WorkspaceService {
             font_family: input.font_family.trim().to_owned(),
             font_size: input.font_size,
             theme: input.theme.trim().to_owned(),
+            palette: input.palette,
             scrollback: input.scrollback,
             encoding: input.encoding,
             keymap: input.keymap,
@@ -1144,6 +1146,7 @@ impl WorkspaceService {
             font_family: "Cascadia Mono".to_owned(),
             font_size: 14.0,
             theme: "firstshell-dark".to_owned(),
+            palette: None,
             scrollback: 10_000,
             encoding: TerminalEncoding::Utf8,
             keymap: TerminalKeymap::Xterm,
@@ -1641,7 +1644,46 @@ fn validate_terminal_input(input: &TerminalProfileInput) -> Result<(), PublicErr
     if !(8.0..=32.0).contains(&input.font_size) || !(100..=200_000).contains(&input.scrollback) {
         return Err(invalid("terminal font size or scrollback exceeds limits"));
     }
+    match (&*input.theme, &input.palette) {
+        ("custom", Some(palette)) => {
+            let colors = [
+                &palette.foreground,
+                &palette.background,
+                &palette.cursor,
+                &palette.cursor_accent,
+                &palette.selection_background,
+                &palette.black,
+                &palette.red,
+                &palette.green,
+                &palette.yellow,
+                &palette.blue,
+                &palette.magenta,
+                &palette.cyan,
+                &palette.white,
+                &palette.bright_black,
+                &palette.bright_red,
+                &palette.bright_green,
+                &palette.bright_yellow,
+                &palette.bright_blue,
+                &palette.bright_magenta,
+                &palette.bright_cyan,
+                &palette.bright_white,
+            ];
+            if colors.iter().any(|color| !valid_terminal_color(color)) {
+                return Err(invalid("custom terminal palette contains an invalid color"));
+            }
+        }
+        ("custom", None) => return Err(invalid("custom terminal theme requires a palette")),
+        (_, Some(_)) => return Err(invalid("terminal palette is only valid for a custom theme")),
+        (_, None) => {}
+    }
     Ok(())
+}
+
+fn valid_terminal_color(value: &str) -> bool {
+    value.len() == 7
+        && value.starts_with('#')
+        && value.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
 }
 
 fn validate_text(
@@ -1843,6 +1885,7 @@ fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
             font_family: terminal.font_family.clone(),
             font_size: terminal.font_size,
             theme: terminal.theme.clone(),
+            palette: terminal.palette.clone(),
             scrollback: terminal.scrollback,
             encoding: terminal.encoding,
             keymap: terminal.keymap,
@@ -2121,6 +2164,30 @@ mod tests {
             .expect_err("three-node jump cycle must be rejected");
         assert_eq!(error.code, ErrorCode::InvalidInput);
         assert!(error.message.contains("transitive loop"));
+    }
+
+    #[test]
+    fn custom_terminal_theme_should_require_a_complete_palette() {
+        let error = validate_terminal_input(&TerminalProfileInput {
+            name: "Custom".to_owned(),
+            font_family: "Cascadia Mono".to_owned(),
+            font_size: 14.0,
+            theme: "custom".to_owned(),
+            palette: None,
+            scrollback: 10_000,
+            encoding: TerminalEncoding::Utf8,
+            keymap: TerminalKeymap::Xterm,
+        })
+        .expect_err("custom themes without a palette must fail closed");
+        assert_eq!(error.code, ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn terminal_colors_should_accept_only_six_digit_hex_values() {
+        assert!(valid_terminal_color("#12aBcF"));
+        assert!(!valid_terminal_color("rgba(0,0,0,0.5)"));
+        assert!(!valid_terminal_color("#fff"));
+        assert!(!valid_terminal_color("#12345g"));
     }
 
     #[tokio::test]

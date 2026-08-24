@@ -5,8 +5,10 @@ import type {
   ProxyProfile,
   TerminalProfile,
   TerminalProfileInput,
+  TerminalPalette,
   WorkspaceSnapshot,
 } from "./types";
+import { DEFAULT_CUSTOM_PALETTE, resolveTerminalTheme, TERMINAL_THEME_PRESETS } from "./terminalThemes";
 
 interface SettingsDialogProps {
   snapshot: WorkspaceSnapshot;
@@ -69,7 +71,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 title="终端配置"
                 items={props.snapshot.terminalProfiles}
                 label={(value) => value.name}
-                detail={(value) => `${value.fontFamily} · ${value.fontSize}px`}
+                detail={(value) => `${value.fontFamily} · ${value.fontSize}px · ${terminalThemeLabel(value.theme)}`}
                 onAdd={() => setEditingTerminal(null)}
                 onEdit={(value) => setEditingTerminal(value)}
                 onDelete={props.onDeleteTerminal}
@@ -137,21 +139,36 @@ function TerminalForm({ value, busy, error, onCancel, onSave }: { value?: Termin
   const [fontFamily, setFontFamily] = useState(value?.fontFamily ?? "Cascadia Mono");
   const [fontSize, setFontSize] = useState(value?.fontSize ?? 14);
   const [theme, setTheme] = useState(value?.theme ?? "firstshell-dark");
+  const [palette, setPalette] = useState<TerminalPalette>(() => structuredClone(value?.palette ?? DEFAULT_CUSTOM_PALETTE));
   const [scrollback, setScrollback] = useState(value?.scrollback ?? 10000);
   const [encoding, setEncoding] = useState<TerminalProfileInput["encoding"]>(value?.encoding ?? "utf8");
   const [keymap, setKeymap] = useState<TerminalProfileInput["keymap"]>(value?.keymap ?? "xterm");
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    return onSave({ name, fontFamily, fontSize, theme, scrollback, encoding, keymap });
+    return onSave({ name, fontFamily, fontSize, theme, palette: theme === "custom" ? palette : null, scrollback, encoding, keymap });
   };
+  const resolvedPalette = resolveTerminalTheme(theme, theme === "custom" ? palette : null);
+  const updateColor = (key: keyof TerminalPalette, color: string) => setPalette((current) => ({ ...current, [key]: color }));
   return (
     <form className="entity-form" onSubmit={submit}>
       <label><span>名称</span><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} /></label>
       <div className="form-row endpoint-row"><label><span>字体</span><input required value={fontFamily} onChange={(event) => setFontFamily(event.target.value)} /></label><label><span>字号</span><input type="number" min={8} max={32} step={0.5} value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} /></label></div>
-      <div className="form-row"><label><span>主题</span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="firstshell-dark">FirstShell Dark</option><option value="firstshell-light">FirstShell Light</option><option value="high-contrast">High Contrast</option></select></label><label><span>滚屏行数</span><input type="number" min={100} max={200000} step={100} value={scrollback} onChange={(event) => setScrollback(Number(event.target.value))} /></label></div>
+      <div className="form-row"><label><span>主题</span><select value={theme} onChange={(event) => setTheme(event.target.value)}>{TERMINAL_THEME_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}<option value="custom">自定义</option></select></label><label><span>滚屏行数</span><input type="number" min={100} max={200000} step={100} value={scrollback} onChange={(event) => setScrollback(Number(event.target.value))} /></label></div>
+      <div className="terminal-theme-preview" style={{ color: resolvedPalette.foreground, background: resolvedPalette.background, caretColor: resolvedPalette.cursor }} aria-label="终端主题预览"><span style={{ color: resolvedPalette.green }}>operator@server</span><span>:</span><span style={{ color: resolvedPalette.blue }}>~/workspace</span><span>$ </span><strong>printf</strong><span style={{ color: resolvedPalette.yellow }}> "FirstShell"</span><i style={{ background: resolvedPalette.selectionBackground }}> theme preview </i></div>
+      {theme === "custom" && <fieldset className="terminal-palette-editor"><legend>自定义调色板</legend><div className="palette-grid">{TERMINAL_COLOR_FIELDS.map(([key, label]) => <label key={key}><span>{label}</span><input aria-label={label} type="color" value={palette[key]} onChange={(event) => updateColor(key, event.target.value)} /><code>{palette[key]}</code></label>)}</div></fieldset>}
       <div className="form-row"><label><span>编码</span><select value={encoding} onChange={(event) => setEncoding(event.target.value as TerminalProfileInput["encoding"])}><option value="utf8">UTF-8</option><option value="gb18030">GB18030</option><option value="big5">Big5</option></select></label><label><span>键位</span><select value={keymap} onChange={(event) => setKeymap(event.target.value as TerminalProfileInput["keymap"])}><option value="xterm">xterm</option><option value="windows">Windows</option><option value="emacs">Emacs</option></select></label></div>
       {error && <div className="inline-error" role="alert">{error}</div>}
       <footer className="modal-actions"><button type="button" onClick={onCancel}>返回</button><button className="primary-command" type="submit" disabled={busy}><Save size={16} /><span>保存</span></button></footer>
     </form>
   );
+}
+
+const TERMINAL_COLOR_FIELDS: readonly (readonly [keyof TerminalPalette, string])[] = [
+  ["foreground", "前景"], ["background", "背景"], ["cursor", "光标"], ["cursorAccent", "光标反色"], ["selectionBackground", "选区"],
+  ["black", "黑"], ["red", "红"], ["green", "绿"], ["yellow", "黄"], ["blue", "蓝"], ["magenta", "品红"], ["cyan", "青"], ["white", "白"],
+  ["brightBlack", "亮黑"], ["brightRed", "亮红"], ["brightGreen", "亮绿"], ["brightYellow", "亮黄"], ["brightBlue", "亮蓝"], ["brightMagenta", "亮品红"], ["brightCyan", "亮青"], ["brightWhite", "亮白"],
+];
+
+function terminalThemeLabel(theme: string) {
+  return theme === "custom" ? "自定义" : TERMINAL_THEME_PRESETS.find((preset) => preset.id === theme)?.label ?? theme;
 }

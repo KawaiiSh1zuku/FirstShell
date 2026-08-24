@@ -1,5 +1,5 @@
-import { Activity, ArrowDownToLine, ArrowUpFromLine, ChevronDown, FolderPlus, KeyRound, Network, Pause, Play, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, ArrowDownToLine, ArrowUp, ArrowUpFromLine, ChevronDown, ChevronRight, FilePenLine, Folder, FolderOpen, FolderPlus, KeyRound, Network, Pause, Play, RefreshCw, RotateCcw, Settings2, ShieldCheck, Square, Trash2 } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkspaceBridge } from "./bridge";
 import type { ConnectionProfile, DesktopTunnelSnapshot, HostKeyEvidence, RemoteEntry, SftpWorkspaceSnapshot, TransferOptions, TransferSnapshot, TransferStatus, TunnelKind } from "./types";
 
@@ -7,6 +7,8 @@ interface OperationsWorkspaceProps {
   bridge: WorkspaceBridge;
   connections: ConnectionProfile[];
   activeConnectionId: string | null;
+  readyConnectionIds: string[];
+  hidden?: boolean;
   activities: { id: number; message: string; time: string }[];
   onActivity(message: string): void;
   onCollapse(): void;
@@ -21,19 +23,71 @@ export function OperationsWorkspace(props: OperationsWorkspaceProps) {
   const [tab, setTab] = useState<BottomTab>("sftp");
   const [connectionId, setConnectionId] = useState(() => sshConnections.find((value) => value.id === props.activeConnectionId)?.id ?? sshConnections[0]?.id ?? "");
   const [root, setRoot] = useState(".");
-  const [workspace, setWorkspace] = useState<SftpWorkspaceSnapshot | null>(null);
+  const [workspaces, setWorkspaces] = useState<Record<string, SftpWorkspaceSnapshot>>({});
+  const workspacesRef = useRef(workspaces);
+  const autoManagedRef = useRef(new Set<string>());
+  const openingRef = useRef(new Set<string>());
+  const suppressedAutoRef = useRef(new Set<string>());
   const [path, setPath] = useState("");
   const [entries, setEntries] = useState<RemoteEntry[]>([]);
+  const [treeDirectories, setTreeDirectories] = useState<Record<string, RemoteEntry[]>>({});
+  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState<RemoteEntry | null>(null);
   const [transfers, setTransfers] = useState<TransferSnapshot[]>([]);
   const [tunnels, setTunnels] = useState<DesktopTunnelSnapshot[]>([]);
   const [options, setOptions] = useState(defaultTransferOptions);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const readyConnectionKey = [...props.readyConnectionIds].sort().join("\u0000");
+  const workspace = workspaces[connectionId] ?? null;
+
+  useEffect(() => { workspacesRef.current = workspaces; }, [workspaces]);
 
   useEffect(() => {
-    if (!workspace && props.activeConnectionId && sshConnections.some((value) => value.id === props.activeConnectionId)) setConnectionId(props.activeConnectionId);
-  }, [props.activeConnectionId, sshConnections, workspace]);
+    if (props.activeConnectionId && sshConnections.some((value) => value.id === props.activeConnectionId)) setConnectionId(props.activeConnectionId);
+  }, [props.activeConnectionId, sshConnections]);
+
+  useEffect(() => {
+    let active = true;
+    const persisted = new Set(sshConnections.map((value) => value.id));
+    const ready = new Set(props.readyConnectionIds.filter((id) => persisted.has(id)));
+
+    for (const id of [...suppressedAutoRef.current]) {
+      if (!ready.has(id)) suppressedAutoRef.current.delete(id);
+    }
+    for (const id of [...autoManagedRef.current]) {
+      if (ready.has(id)) continue;
+      autoManagedRef.current.delete(id);
+      const stale = workspacesRef.current[id];
+      if (stale) {
+        void props.bridge.closeSftp(stale.id).catch(() => undefined);
+        setWorkspaces((current) => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+      }
+    }
+
+    ready.forEach((id) => {
+      if (workspacesRef.current[id] || openingRef.current.has(id) || suppressedAutoRef.current.has(id)) return;
+      openingRef.current.add(id);
+      void props.bridge.openSftp(id, ".")
+        .then((next) => {
+          if (!active) {
+            void props.bridge.closeSftp(next.id).catch(() => undefined);
+            return;
+          }
+          autoManagedRef.current.add(id);
+          setWorkspaces((current) => ({ ...current, [id]: next }));
+          props.onActivity(next.state === "ready" ? "终端 companion SFTP 已连接" : "companion SFTP 等待主机密钥确认");
+        })
+        .catch((reason) => { if (active) setError(`SFTP 自动连接失败：${message(reason)}`); })
+        .finally(() => { openingRef.current.delete(id); });
+    });
+
+    return () => { active = false; };
+  }, [props.bridge, props.onActivity, readyConnectionKey, sshConnections]);
 
   useEffect(() => {
     void Promise.all([props.bridge.listTransfers(), props.bridge.listTunnels()])
@@ -81,19 +135,27 @@ export function OperationsWorkspace(props: OperationsWorkspaceProps) {
     if (!target || target.state !== "ready") return;
     setBusy(true); setError(null);
     try {
-      setEntries(await props.bridge.listSftp(target.id, nextPath));
+      const nextEntries = await props.bridge.listSftp(target.id, nextPath);
+      setEntries(nextEntries);
+      setTreeDirectories((current) => ({ ...current, [treeKey(target.id, nextPath)]: nextEntries.filter((entry) => entry.kind === "directory") }));
+      setExpandedDirectories((current) => new Set(current).add(treeKey(target.id, nextPath)));
       setPath(nextPath); setSelected(null);
     } catch (reason) { setError(message(reason)); }
     finally { setBusy(false); }
   }, [props.bridge, workspace]);
+
+  useEffect(() => {
+    if (workspace?.state === "ready") void loadDirectory("", workspace);
+    else { setEntries([]); setPath(""); setSelected(null); }
+  }, [loadDirectory, workspace?.id, workspace?.state]);
 
   const openSftp = async () => {
     if (!connectionId) return;
     setBusy(true); setError(null);
     try {
       const next = await props.bridge.openSftp(connectionId, root);
-      setWorkspace(next);
-      if (next.state === "ready") await loadDirectory("", next);
+      suppressedAutoRef.current.delete(connectionId);
+      setWorkspaces((current) => ({ ...current, [connectionId]: next }));
       props.onActivity(next.state === "ready" ? "SFTP 工作区已连接" : "SFTP 等待主机密钥确认");
     } catch (reason) { setError(message(reason)); }
     finally { setBusy(false); }
@@ -102,7 +164,14 @@ export function OperationsWorkspace(props: OperationsWorkspaceProps) {
   const closeSftp = async () => {
     if (!workspace) return;
     try { await props.bridge.closeSftp(workspace.id); } catch {}
-    setWorkspace(null); setEntries([]); setPath(""); setSelected(null);
+    suppressedAutoRef.current.add(connectionId);
+    autoManagedRef.current.delete(connectionId);
+    setWorkspaces((current) => {
+      const next = { ...current };
+      delete next[connectionId];
+      return next;
+    });
+    setEntries([]); setPath(""); setSelected(null);
   };
 
   const approveSftp = async () => {
@@ -111,10 +180,28 @@ export function OperationsWorkspace(props: OperationsWorkspaceProps) {
     setBusy(true); setError(null);
     try {
       const next = await props.bridge.approveSftpHostKey(workspace.id, evidence.fingerprint, evidence.previousFingerprint);
-      setWorkspace(next);
-      if (next.state === "ready") await loadDirectory("", next);
+      setWorkspaces((current) => ({ ...current, [connectionId]: next }));
     } catch (reason) { setError(message(reason)); }
     finally { setBusy(false); }
+  };
+
+  const toggleDirectory = async (directory: string) => {
+    if (!workspace || workspace.state !== "ready") return;
+    const key = treeKey(workspace.id, directory);
+    if (expandedDirectories.has(key)) {
+      setExpandedDirectories((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+      return;
+    }
+    setExpandedDirectories((current) => new Set(current).add(key));
+    if (treeDirectories[key]) return;
+    try {
+      const children = await props.bridge.listSftp(workspace.id, directory);
+      setTreeDirectories((current) => ({ ...current, [key]: children.filter((entry) => entry.kind === "directory") }));
+    } catch (reason) { setError(message(reason)); }
   };
 
   const mutateEntry = async (kind: "mkdir" | "rename" | "delete" | "chmod") => {
@@ -158,7 +245,7 @@ export function OperationsWorkspace(props: OperationsWorkspaceProps) {
   };
 
   return (
-    <section className="operations-panel" aria-label="文件与网络工具">
+    <section className="operations-panel" aria-label="文件与网络工具" hidden={props.hidden}>
       <header className="operations-header">
         <nav aria-label="底部工具">
           <Tab value="sftp" active={tab} onSelect={setTab}>SFTP</Tab>
@@ -170,7 +257,7 @@ export function OperationsWorkspace(props: OperationsWorkspaceProps) {
       </header>
       {error && <div className="operations-error" role="alert">{error}</div>}
       <div className="operations-content">
-        {tab === "sftp" && <SftpView connections={sshConnections} connectionId={connectionId} onConnectionId={setConnectionId} root={root} onRoot={setRoot} workspace={workspace} path={path} entries={entries} selected={selected} busy={busy} options={options} onOptions={setOptions} onOpen={() => void openSftp()} onClose={() => void closeSftp()} onApprove={() => void approveSftp()} onOpenPath={(value) => void loadDirectory(value)} onSelect={setSelected} onRefresh={() => void loadDirectory(path)} onMutate={(value) => void mutateEntry(value)} onUpload={() => void upload()} onDownload={() => void download()} />}
+        {tab === "sftp" && <SftpView connections={sshConnections} connectionId={connectionId} onConnectionId={setConnectionId} root={root} onRoot={setRoot} workspace={workspace} path={path} entries={entries} treeDirectories={treeDirectories} expandedDirectories={expandedDirectories} selected={selected} busy={busy} options={options} onOptions={setOptions} onOpen={() => void openSftp()} onClose={() => void closeSftp()} onApprove={() => void approveSftp()} onOpenPath={(value) => void loadDirectory(value)} onToggleDirectory={(value) => void toggleDirectory(value)} onSelect={setSelected} onRefresh={() => void loadDirectory(path)} onMutate={(value) => void mutateEntry(value)} onUpload={() => void upload()} onDownload={() => void download()} />}
         {tab === "transfers" && <TransferView transfers={transfers} onPause={async (id) => { await props.bridge.pauseTransfer(id); setTransfers(await props.bridge.listTransfers()); }} onCancel={async (id) => { await props.bridge.cancelTransfer(id); setTransfers(await props.bridge.listTransfers()); }} onRetry={async (id) => { const value = await props.bridge.retryTransfer(id, updateTransfer); setTransfers((current) => mergeTransfers(current, [value])); }} onClear={async () => { await props.bridge.clearFinishedTransfers(); setTransfers(await props.bridge.listTransfers()); }} />}
         {tab === "tunnels" && <TunnelView bridge={props.bridge} connections={sshConnections} defaultConnectionId={connectionId} tunnels={tunnels} onTunnels={setTunnels} onError={setError} onActivity={props.onActivity} />}
         {tab === "activity" && <div className="activity-list operations-activity">{props.activities.map((item) => <div key={item.id}><time>{item.time}</time><span>{item.message}</span></div>)}{props.activities.length === 0 && <div className="empty-list">暂无活动</div>}</div>}
@@ -183,11 +270,81 @@ function Tab({ value, active, onSelect, children }: { value: BottomTab; active: 
   return <button type="button" aria-current={active === value} onClick={() => onSelect(value)}>{children}</button>;
 }
 
-function SftpView(props: { connections: ConnectionProfile[]; connectionId: string; onConnectionId(value: string): void; root: string; onRoot(value: string): void; workspace: SftpWorkspaceSnapshot | null; path: string; entries: RemoteEntry[]; selected: RemoteEntry | null; busy: boolean; options: TransferOptions; onOptions(value: TransferOptions): void; onOpen(): void; onClose(): void; onApprove(): void; onOpenPath(value: string): void; onSelect(value: RemoteEntry): void; onRefresh(): void; onMutate(value: "mkdir" | "rename" | "delete" | "chmod"): void; onUpload(): void; onDownload(): void }) {
+interface SftpViewProps {
+  connections: ConnectionProfile[];
+  connectionId: string;
+  onConnectionId(value: string): void;
+  root: string;
+  onRoot(value: string): void;
+  workspace: SftpWorkspaceSnapshot | null;
+  path: string;
+  entries: RemoteEntry[];
+  treeDirectories: Record<string, RemoteEntry[]>;
+  expandedDirectories: Set<string>;
+  selected: RemoteEntry | null;
+  busy: boolean;
+  options: TransferOptions;
+  onOptions(value: TransferOptions): void;
+  onOpen(): void;
+  onClose(): void;
+  onApprove(): void;
+  onOpenPath(value: string): void;
+  onToggleDirectory(value: string): void;
+  onSelect(value: RemoteEntry): void;
+  onRefresh(): void;
+  onMutate(value: "mkdir" | "rename" | "delete" | "chmod"): void;
+  onUpload(): void;
+  onDownload(): void;
+}
+
+function SftpView(props: SftpViewProps) {
+  const [address, setAddress] = useState("");
+  const [addressError, setAddressError] = useState<string | null>(null);
+  useEffect(() => {
+    setAddress(props.workspace ? remoteAddress(props.workspace.root, props.path) : "");
+    setAddressError(null);
+  }, [props.path, props.workspace]);
+
   if (!props.workspace) return <div className="sftp-connect"><select aria-label="SFTP 连接" value={props.connectionId} onChange={(event) => props.onConnectionId(event.target.value)}><option value="">选择 SSH 连接</option>{props.connections.map((value) => <option key={value.id} value={value.id}>{value.name} · {value.host}</option>)}</select><input aria-label="远程根目录" value={props.root} onChange={(event) => props.onRoot(event.target.value)} placeholder="远程根目录" /><button className="primary-command" type="button" disabled={!props.connectionId || props.busy} onClick={props.onOpen}>连接 SFTP</button></div>;
   if (props.workspace.state === "host_key_required" && props.workspace.hostKey) return <HostKeyNotice evidence={props.workspace.hostKey} onApprove={props.onApprove} busy={props.busy} />;
-  const crumbs = props.path ? props.path.split('/') : [];
-  return <div className="sftp-browser"><div className="sftp-toolbar"><div className="breadcrumbs"><button type="button" onClick={() => props.onOpenPath("")}>{props.workspace.root}</button>{crumbs.map((value, index) => <button type="button" key={`${value}-${index}`} onClick={() => props.onOpenPath(crumbs.slice(0, index + 1).join('/'))}>/{value}</button>)}</div><div><button className="icon-button" type="button" aria-label="刷新 SFTP" title="刷新" onClick={props.onRefresh}><RefreshCw size={14} /></button><button className="icon-button" type="button" aria-label="新建远程目录" title="新建目录" onClick={() => props.onMutate("mkdir")}><FolderPlus size={14} /></button><button type="button" onClick={props.onClose}>关闭</button></div></div><div className="sftp-actions"><select aria-label="冲突策略" value={props.options.conflict} onChange={(event) => props.onOptions({ ...props.options, conflict: event.target.value as TransferOptions["conflict"] })}><option value="deny">拒绝覆盖</option><option value="replace">替换</option><option value="resume">续传</option></select><select aria-label="校验方式" value={props.options.verify} onChange={(event) => props.onOptions({ ...props.options, verify: event.target.value as TransferOptions["verify"] })}><option value="size">大小校验</option><option value="sha256">SHA-256</option></select><button type="button" onClick={props.onUpload}><ArrowUpFromLine size={14} />多文件上传</button><button type="button" disabled={props.selected?.kind !== "file"} onClick={props.onDownload}><ArrowDownToLine size={14} />下载</button><button type="button" disabled={!props.selected} onClick={() => props.onMutate("rename")}>重命名</button><button type="button" disabled={!props.selected || props.selected.kind === "symlink"} onClick={() => props.onMutate("chmod")}>权限</button><button className="danger" type="button" disabled={!props.selected} onClick={() => props.onMutate("delete")}><Trash2 size={13} />删除</button><span className="sftp-drop-hint">可拖放本地文件上传；路径仅由 Rust 处理</span></div><div className="sftp-table" role="grid" aria-label="远程文件"><div className="sftp-row sftp-heading" role="row"><span>名称</span><span>大小</span><span>权限</span></div>{props.entries.map((entry) => <button className={`sftp-row ${props.selected?.path === entry.path ? "selected" : ""}`} role="row" type="button" key={entry.path} onClick={() => props.onSelect(entry)} onDoubleClick={() => entry.kind === "directory" && props.onOpenPath(entry.path)}><span>{entry.kind === "directory" ? "📁" : entry.kind === "symlink" ? "↗" : "▤"} {entry.name}{entry.linkTarget ? ` → ${entry.linkTarget}` : ""}</span><span>{entry.size === null ? "—" : formatBytes(entry.size)}</span><span>{entry.permissions === null ? "—" : (entry.permissions & 0o7777).toString(8)}</span></button>)}{!props.entries.length && <div className="empty-list">目录为空</div>}</div></div>;
+  const submitAddress = (event: FormEvent) => {
+    event.preventDefault();
+    const next = relativeRemoteAddress(props.workspace?.root ?? "", address);
+    if (next === null) { setAddressError("地址必须位于当前 SFTP 根目录内"); return; }
+    setAddressError(null);
+    props.onOpenPath(next);
+  };
+  const parent = props.path.includes("/") ? props.path.slice(0, props.path.lastIndexOf("/")) : "";
+  return <div className="sftp-browser">
+    <div className="sftp-toolbar">
+      <button className="icon-button" type="button" aria-label="上级目录" title="上级目录" disabled={!props.path} onClick={() => props.onOpenPath(parent)}><ArrowUp size={14} /></button>
+      <button className="icon-button" type="button" aria-label="刷新 SFTP" title="刷新" onClick={props.onRefresh}><RefreshCw size={14} /></button>
+      <form className="sftp-address" onSubmit={submitAddress}><FolderOpen size={14} aria-hidden="true" /><input aria-label="远程地址" aria-invalid={Boolean(addressError)} value={address} onChange={(event) => setAddress(event.target.value)} title={addressError ?? "输入当前 SFTP 根目录内的路径并回车"} /><button type="submit">跳转</button></form>
+      <button className="icon-button" type="button" aria-label="新建远程目录" title="新建目录" onClick={() => props.onMutate("mkdir")}><FolderPlus size={14} /></button>
+      <button className="icon-button" type="button" aria-label="多文件上传" title="多文件上传" onClick={props.onUpload}><ArrowUpFromLine size={14} /></button>
+      <button className="icon-button" type="button" aria-label="下载" title="下载" disabled={props.selected?.kind !== "file"} onClick={props.onDownload}><ArrowDownToLine size={14} /></button>
+      <button className="icon-button" type="button" aria-label="重命名" title="重命名" disabled={!props.selected} onClick={() => props.onMutate("rename")}><FilePenLine size={14} /></button>
+      <button className="icon-button" type="button" aria-label="修改权限" title="修改权限" disabled={!props.selected || props.selected.kind === "symlink"} onClick={() => props.onMutate("chmod")}><ShieldCheck size={14} /></button>
+      <button className="icon-button danger" type="button" aria-label="删除" title="删除" disabled={!props.selected} onClick={() => props.onMutate("delete")}><Trash2 size={13} /></button>
+      <details className="sftp-options"><summary aria-label="传输选项" title="传输选项"><Settings2 size={14} /></summary><div><label><span>冲突策略</span><select aria-label="冲突策略" value={props.options.conflict} onChange={(event) => props.onOptions({ ...props.options, conflict: event.target.value as TransferOptions["conflict"] })}><option value="deny">拒绝覆盖</option><option value="replace">替换</option><option value="resume">续传</option></select></label><label><span>校验</span><select aria-label="校验方式" value={props.options.verify} onChange={(event) => props.onOptions({ ...props.options, verify: event.target.value as TransferOptions["verify"] })}><option value="size">大小</option><option value="sha256">SHA-256</option></select></label><small>拖放上传路径仅由 Rust 处理</small></div></details>
+      <button type="button" onClick={props.onClose}>关闭</button>
+    </div>
+    <div className="sftp-body">
+      <DirectoryTree workspace={props.workspace} currentPath={props.path} directories={props.treeDirectories} expanded={props.expandedDirectories} onOpen={props.onOpenPath} onToggle={props.onToggleDirectory} />
+      <div className="sftp-table" role="grid" aria-label="远程文件"><div className="sftp-row sftp-heading" role="row"><span>名称</span><span>大小</span><span>权限</span></div>{props.entries.map((entry) => <button className={`sftp-row ${props.selected?.path === entry.path ? "selected" : ""}`} role="row" type="button" key={entry.path} onClick={() => props.onSelect(entry)} onDoubleClick={() => entry.kind === "directory" && props.onOpenPath(entry.path)}><span>{entry.kind === "directory" ? "📁" : entry.kind === "symlink" ? "↗" : "▤"} {entry.name}{entry.linkTarget ? ` → ${entry.linkTarget}` : ""}</span><span>{entry.size === null ? "—" : formatBytes(entry.size)}</span><span>{entry.permissions === null ? "—" : (entry.permissions & 0o7777).toString(8)}</span></button>)}{!props.entries.length && <div className="empty-list">目录为空</div>}</div>
+    </div>
+  </div>;
+}
+
+function DirectoryTree({ workspace, currentPath, directories, expanded, onOpen, onToggle }: { workspace: SftpWorkspaceSnapshot; currentPath: string; directories: Record<string, RemoteEntry[]>; expanded: Set<string>; onOpen(path: string): void; onToggle(path: string): void }) {
+  const rootKey = treeKey(workspace.id, "");
+  return <div className="sftp-tree" role="tree" aria-label="远程目录树"><div className="sftp-tree-root" role="treeitem" aria-expanded={expanded.has(rootKey)}><button className="tree-toggle" type="button" aria-label="展开根目录" onClick={() => onToggle("")}>{expanded.has(rootKey) ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button><button className={currentPath === "" ? "active" : ""} type="button" onClick={() => onOpen("")}><FolderOpen size={14} /><span>{workspace.root}</span></button></div>{expanded.has(rootKey) && <div role="group">{(directories[rootKey] ?? []).map((entry) => <DirectoryNode key={entry.path} workspaceId={workspace.id} entry={entry} currentPath={currentPath} directories={directories} expanded={expanded} onOpen={onOpen} onToggle={onToggle} />)}</div>}</div>;
+}
+
+function DirectoryNode({ workspaceId, entry, currentPath, directories, expanded, onOpen, onToggle }: { workspaceId: string; entry: RemoteEntry; currentPath: string; directories: Record<string, RemoteEntry[]>; expanded: Set<string>; onOpen(path: string): void; onToggle(path: string): void }) {
+  const key = treeKey(workspaceId, entry.path);
+  const open = expanded.has(key);
+  return <div className="sftp-tree-node" role="treeitem" aria-expanded={open}><div><button className="tree-toggle" type="button" aria-label={`${open ? "收起" : "展开"} ${entry.name}`} onClick={() => onToggle(entry.path)}>{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button><button className={currentPath === entry.path ? "active" : ""} type="button" onClick={() => onOpen(entry.path)}><Folder size={14} /><span>{entry.name}</span></button></div>{open && <div role="group">{(directories[key] ?? []).map((child) => <DirectoryNode key={child.path} workspaceId={workspaceId} entry={child} currentPath={currentPath} directories={directories} expanded={expanded} onOpen={onOpen} onToggle={onToggle} />)}</div>}</div>;
 }
 
 function TransferView({ transfers, onPause, onCancel, onRetry, onClear }: { transfers: TransferSnapshot[]; onPause(id: string): Promise<void>; onCancel(id: string): Promise<void>; onRetry(id: string): Promise<void>; onClear(): Promise<void> }) {
@@ -237,3 +394,15 @@ function isTerminal(value: TransferSnapshot) { return ["completed", "failed", "c
 function transferLabel(value: TransferSnapshot) { return value.error ?? ({ queued: "排队中", running: "传输中", pausing: "正在暂停", paused: "已暂停", cancelling: "正在取消", completed: value.resumed ? "已续传完成" : "已完成", failed: "失败", cancelled: "已取消" } as const)[value.status]; }
 function formatBytes(value: number) { if (value < 1024) return `${value} B`; if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`; return `${(value / 1024 ** 2).toFixed(1)} MiB`; }
 function message(reason: unknown) { return reason instanceof Error ? reason.message : typeof reason === "object" && reason && "message" in reason ? String((reason as { message: unknown }).message) : "操作失败"; }
+function treeKey(workspaceId: string, path: string) { return `${workspaceId}\u0000${path}`; }
+function remoteAddress(root: string, path: string) { return path ? `${root.replace(/\/$/, "")}/${path}` : root; }
+function relativeRemoteAddress(root: string, address: string) {
+  const normalizedRoot = root.replace(/\/$/, "") || "/";
+  const normalized = address.trim().replace(/\\/g, "/").replace(/\/{2,}/g, "/").replace(/\/$/, "") || normalizedRoot;
+  let relative: string | null = null;
+  if (normalized === normalizedRoot) relative = "";
+  else if (normalizedRoot === "/" && normalized.startsWith("/")) relative = normalized.slice(1);
+  else if (normalized.startsWith(`${normalizedRoot}/`)) relative = normalized.slice(normalizedRoot.length + 1);
+  else if (!normalized.startsWith("/")) relative = normalized.replace(/^\.\//, "");
+  return relative !== null && !relative.split("/").includes("..") ? relative : null;
+}

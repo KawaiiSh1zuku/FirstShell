@@ -24,7 +24,7 @@ M1 冻结的 schema version 2 包含下列实际表。后续里程碑新增表�
 | `folders` | id、parent_id、sort_order、revision、deleted_at | 名称、备注 | 连接树层级 |
 | `connection_profiles` | id、folder_id、kind、revision、deleted_at | 主机、端口、用户、认证引用、标签、备注 | SSH/RDP/本地会话配置 |
 | `proxy_profiles` | id、kind、revision、deleted_at | 代理地址、认证、DNS 策略 | SOCKS5、HTTP CONNECT、系统代理 |
-| `terminal_profiles` | id、revision | 字体、主题、键位、编码、行为配置 | 终端外观与交互 |
+| `terminal_profiles` | id、revision | 字体、预设主题、自定义 ANSI palette、键位、编码、行为配置 | 终端外观与交互 |
 | `ui_state` | workspace_id、revision | 布局、面板尺寸、最近标签 | 工作区恢复 |
 
 M0 的 `probe_records` 仍保留用于 schema 1 到 schema 2 的真实升级测试，不承载产品数据。`tunnel_profiles`、`snippets`、`command_history`、`transfer_jobs`、`sync_state` 和 `sync_outbox` 分别属于后续里程碑，只有迁移合入后才进入当前表清单。M2 的 known_hosts 是应用数据目录中的 OpenSSH 格式安全文件，不是数据库表；若后续需要同步或结构化管理，必须新增迁移和安全决策。
@@ -62,6 +62,8 @@ Vault Key 与 Sync Key 相互独立：本地记录由 Vault Key 保护；进入�
 M2 不改变 schema version 2。连接加密 payload 新增认证类型、私钥路径、按主机弱算法开关和 OpenSSH 回退开关；终端 payload 新增编码和键位配置。字段使用 serde 默认值兼容 M1 已保存 payload，因此不需要数据库迁移。快速连接只存在于当前前端会话，不写入 SQLite；原生取得的 SSH 秘密只进入 OS keyring 和短期可清零内存，不进入连接 payload。
 
 M3 仍不改变 schema version 2。连接加密 payload 增加有序 `jumpHostIds`，代理加密 payload 增加 `dnsMode`；两者使用 serde 默认值读取旧记录，并在 application 层验证引用、最多四跳和传递循环。代理密码仍只进入 OS keyring。SFTP workspace、隧道、传输任务和拖放批次都是当前进程的 Rust 运行时记录，不创建 `transfer_jobs` 或 `tunnel_profiles` 表；Vault 锁定会取消并清空这些记录，本地绝对路径、remote partial 名和进度不持久化。
+
+M3 补充继续保持 schema version 2。terminal profile 加密 payload 增加可选 `palette`；旧记录缺少该字段时按 `None` 读取。`theme=custom` 必须携带完整的前景、背景、光标、选区与 16 个 ANSI `#RRGGBB` 颜色；其他预设只保存稳定 ID 并拒绝冗余 palette。companion SFTP 的 workspace ID、目录缓存和自动抑制状态仍为进程内状态，不写入 SQLite。
 
 ## 查询与搜索
 

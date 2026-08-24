@@ -12,6 +12,7 @@
 | SSH/SFTP | `russh`、`russh-sftp` | Apache-2.0 | 与 AGPL-3.0-only 兼容，保留 NOTICE 要求 |
 | M3 Connector 与校验 | `base64`、`url`、`sha2`、`winreg`、`tokio-util` | MIT OR Apache-2.0；MIT | 与 AGPL-3.0-only 兼容；均已存在于或通过兼容许可证进入锁树 |
 | 终端 | `@xterm/xterm`、`@xterm/addon-fit`、`portable-pty` | MIT | 与 AGPL-3.0-only 兼容；分发时保留上游许可证文本 |
+| 内置终端配色 | Solarized、Nord、Dracula、One Dark；Gruvbox（开发例外） | 前四项 MIT；Gruvbox 待确认 | 仅复用公开配色值，不引入运行时依赖；前四项发布 NOTICE 保留对应 MIT 声明；Gruvbox 在 M7 发布前必须取得明确授权或移除 |
 | 终端编码 | `encoding_rs` | (Apache-2.0 OR MIT) AND BSD-3-Clause | 与 AGPL-3.0-only 兼容；保留 Apache/MIT/BSD 文本与适用 notice |
 | 原生秘密输入 | `tinyfiledialogs` | zlib-acknowledgement | 与 AGPL-3.0-only 兼容；保留源文件声明，并在产品 NOTICE 中致谢 tinyfiledialogs |
 | 密码学 | RustCrypto XChaCha20-Poly1305、HKDF、SHA-2 | MIT OR Apache-2.0 | 与 AGPL-3.0-only 兼容 |
@@ -39,3 +40,4 @@ FreeRDP 的 Apache-2.0 结论来自上游 LICENSE；实际打包前还必须审�
 - 生成第三方 NOTICE/SBOM，保留 Apache、MIT、BSD、BlueOak、MPL、Unicode、zlib-acknowledgement 和其他适用文本；对 tinyfiledialogs 给出产品致谢。
 - 禁止引入无许可证、仅源代码可见、自定义非商业条款、SSPL、BUSL 或与 AGPL 不兼容的依赖。
 - 候选依赖只有在真正加入锁文件并重新通过自动与人工审查后才算获准使用。
+- 配色集合仓库的统一许可证不能替代单个主题许可证。Gruvbox 按项目负责人决定作为开发阶段临时例外保留，不阻塞当前依赖扫描；M7 发布门禁不得忽略，必须取得明确授权或移除该预设。

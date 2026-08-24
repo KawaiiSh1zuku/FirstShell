@@ -5,6 +5,30 @@ export type SshAuthenticationKind = "agent" | "password" | "private_key" | "keyb
 export type TerminalEncoding = "utf8" | "gb18030" | "big5";
 export type TerminalKeymap = "xterm" | "windows" | "emacs";
 
+export interface TerminalPalette {
+  foreground: string;
+  background: string;
+  cursor: string;
+  cursorAccent: string;
+  selectionBackground: string;
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+}
+
 export interface VaultStatus {
   initialized: boolean;
   unlocked: boolean;
@@ -98,6 +122,7 @@ export interface TerminalProfile {
   fontFamily: string;
   fontSize: number;
   theme: string;
+  palette: TerminalPalette | null;
   scrollback: number;
   encoding: TerminalEncoding;
   keymap: TerminalKeymap;
@@ -108,6 +133,7 @@ export interface TerminalProfileInput {
   fontFamily: string;
   fontSize: number;
   theme: string;
+  palette: TerminalPalette | null;
   scrollback: number;
   encoding: TerminalEncoding;
   keymap: TerminalKeymap;

@@ -32,10 +32,35 @@ afterEach(() => {
 });
 
 describe("M3 operations workspace", () => {
+  it("automatically pairs a ready terminal with a rooted SFTP tree and address bar", async () => {
+    const bridge = createPreviewBridge();
+    const open = vi.spyOn(bridge, "openSftp");
+    const close = vi.spyOn(bridge, "closeSftp");
+    const list = vi.spyOn(bridge, "listSftp");
+    const user = userEvent.setup();
+    const props = { bridge, connections: [connection], activeConnectionId: connection.id, activities: [], onActivity: () => undefined, onCollapse: () => undefined };
+    const view = render(<OperationsWorkspace {...props} readyConnectionIds={[connection.id]} />);
+
+    expect(await screen.findByRole("tree", { name: "远程目录树" })).toBeTruthy();
+    expect(open).toHaveBeenCalledWith(connection.id, ".");
+    const address = screen.getByRole("textbox", { name: "远程地址" });
+    await waitFor(() => expect((address as HTMLInputElement).value).toBe("/home/preview"));
+    await user.clear(address);
+    await user.type(address, "/home/preview/logs{Enter}");
+    await waitFor(() => expect(list).toHaveBeenCalledWith(expect.any(String), "logs"));
+    await user.clear(address);
+    await user.type(address, "/etc{Enter}");
+    expect(address.getAttribute("aria-invalid")).toBe("true");
+    expect(list).not.toHaveBeenCalledWith(expect.any(String), "etc");
+
+    view.rerender(<OperationsWorkspace {...props} readyConnectionIds={[]} />);
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  });
+
   it("opens a rooted SFTP browser and starts an explicit tunnel", async () => {
     const bridge = createPreviewBridge();
     const user = userEvent.setup();
-    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
+    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} readyConnectionIds={[]} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: "连接 SFTP" }));
     expect(await screen.findByText(/README\.txt/)).toBeTruthy();
@@ -66,7 +91,7 @@ describe("M3 operations workspace", () => {
       return [queued];
     };
     const user = userEvent.setup();
-    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
+    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} readyConnectionIds={[]} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: "连接 SFTP" }));
     await screen.findByText(/README\.txt/);
@@ -98,7 +123,7 @@ describe("M3 operations workspace", () => {
     };
     bridge.queueSftpDrop = vi.fn(async () => [queued]);
     const user = userEvent.setup();
-    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
+    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} readyConnectionIds={[]} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: "连接 SFTP" }));
     await screen.findByText(/README\.txt/);
@@ -144,7 +169,7 @@ describe("M3 operations workspace", () => {
       return queued;
     });
     const user = userEvent.setup();
-    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
+    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} readyConnectionIds={[]} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: /^传输/ }));
     await user.click(await screen.findByRole("button", { name: "暂停 large.bin" }));

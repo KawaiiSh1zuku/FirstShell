@@ -4,6 +4,7 @@ import type { VaultStatus } from "./types";
 
 interface VaultGateProps {
   status: VaultStatus;
+  initialMode?: "unlock" | "recover";
   busy: boolean;
   error: string | null;
   onInitialize(password: string): Promise<void>;
@@ -13,13 +14,14 @@ interface VaultGateProps {
 
 export function VaultGate({
   status,
+  initialMode = "unlock",
   busy,
   error,
   onInitialize,
   onUnlock,
   onRecover,
 }: VaultGateProps) {
-  const [mode, setMode] = useState<"unlock" | "recover">("unlock");
+  const [mode, setMode] = useState<"unlock" | "recover">(initialMode);
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
 

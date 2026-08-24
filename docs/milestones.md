@@ -108,6 +108,16 @@ M5 的协议和服务端可以在 M2-M4 期间并行开发，但只有覆盖最�
 
 验收证据：[M3 验收记录](./verification/m3.md)。Release 基准在同一受控 SSH/SFTP 服务上以 Windows OpenSSH `sftp.exe` 为基线；系统代理按连接固化静态结果，PAC JavaScript 不在 M3 边界内。
 
+### M3 补充：终端伴随文件工作流与启动体验
+
+- [x] 持久化 SSH 终端 Ready 后自动建立 companion SFTP，同连接多 pane 共享，最后一个 pane 退出后回收；SFTP 故障不影响终端。
+- [x] SFTP 使用紧凑单行工具栏、顶部地址栏、左侧懒加载目录树和右侧文件表，并在前端与 Rust 两层拒绝根外跳转。
+- [x] 应用启动优先使用设备 OS keyring 解锁 Vault，失败时回落到恢复口令。
+- [x] 终端提供 FirstShell、Solarized、Nord、Dracula、Gruvbox、One Dark、High Contrast 预设及完整自定义 ANSI palette；旧 profile 保持 schema 2 兼容。
+- [x] 双视口视觉基线、Rust/前端测试、生产构建、Clippy、许可证扫描和公告扫描通过。
+
+补充验收证据：[M3 补充验收记录](./verification/m3-supplement.md)。Gruvbox 仅按项目负责人决定作为开发阶段许可证例外保留，M7 发布前必须取得明确授权或移除；该例外不等于许可证审查通过。
+
 ## M4 主机监控与效率工具
 
 目标：在不安装远端 agent 的前提下提供低开销观测和可控的命令效率能力。

@@ -28,9 +28,11 @@ FirstShell 是一个面向运维、开发和远程支持场景的开源桌面工
 8. [M1 验收记录](./verification/m1.md)：Vault、数据层、桌面 UI 自动化证据和实机延期项。
 9. [M2 验收记录](./verification/m2.md)：SSH、终端、会话运行时、安全与视觉证据。
 10. [M3 验收记录](./verification/m3.md)：SFTP、Connector、隧道、性能、安全与视觉证据。
-11. [M2 开发进度检查点](./2026-08-23_m2-development-progress.md)：2026-08-23 的历史检查点及其后续解决状态。
-12. [架构决策记录](./adr/0001-modular-monolith.md)：重要方案选择及其取舍。
-13. [M3 Operations ADR](./adr/0006-m3-operations-runtime.md)：Connector、SFTP、隧道、运行时任务和本地路径边界。
+11. [M3 补充验收记录](./verification/m3-supplement.md)：自动 companion SFTP、紧凑文件工作区、启动快速解锁与终端 palette。
+12. [M2 开发进度检查点](./2026-08-23_m2-development-progress.md)：2026-08-23 的历史检查点及其后续解决状态。
+13. [架构决策记录](./adr/0001-modular-monolith.md)：重要方案选择及其取舍。
+14. [M3 Operations ADR](./adr/0006-m3-operations-runtime.md)：Connector、SFTP、隧道、运行时任务和本地路径边界。
+15. [M3 补充 ADR](./adr/0007-m3-companion-sftp-and-terminal-themes.md)：companion 生命周期、自动快速解锁、地址栏与终端调色板。
 
 
 ## 文档治理

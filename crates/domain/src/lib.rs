@@ -292,6 +292,55 @@ pub struct ProxyInput {
 }
 
 /// Decrypted terminal appearance and behavior profile.
+/// Complete xterm color palette for a user-defined terminal theme.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalPalette {
+    /// Default text color.
+    pub foreground: String,
+    /// Terminal canvas color.
+    pub background: String,
+    /// Cursor color.
+    pub cursor: String,
+    /// Text color rendered inside a block cursor.
+    pub cursor_accent: String,
+    /// Selection highlight color.
+    pub selection_background: String,
+    /// ANSI black.
+    pub black: String,
+    /// ANSI red.
+    pub red: String,
+    /// ANSI green.
+    pub green: String,
+    /// ANSI yellow.
+    pub yellow: String,
+    /// ANSI blue.
+    pub blue: String,
+    /// ANSI magenta.
+    pub magenta: String,
+    /// ANSI cyan.
+    pub cyan: String,
+    /// ANSI white.
+    pub white: String,
+    /// ANSI bright black.
+    pub bright_black: String,
+    /// ANSI bright red.
+    pub bright_red: String,
+    /// ANSI bright green.
+    pub bright_green: String,
+    /// ANSI bright yellow.
+    pub bright_yellow: String,
+    /// ANSI bright blue.
+    pub bright_blue: String,
+    /// ANSI bright magenta.
+    pub bright_magenta: String,
+    /// ANSI bright cyan.
+    pub bright_cyan: String,
+    /// ANSI bright white.
+    pub bright_white: String,
+}
+
+/// Decrypted terminal appearance and behavior profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalProfile {
@@ -307,6 +356,9 @@ pub struct TerminalProfile {
     pub font_size: f32,
     /// Theme identifier interpreted by the terminal adapter.
     pub theme: String,
+    /// Complete palette when `theme` is `custom`.
+    #[serde(default)]
+    pub palette: Option<TerminalPalette>,
     /// Maximum in-memory scrollback lines.
     pub scrollback: u32,
     /// Remote byte encoding.
@@ -329,6 +381,9 @@ pub struct TerminalProfileInput {
     pub font_size: f32,
     /// Theme identifier interpreted by the terminal adapter.
     pub theme: String,
+    /// Complete palette when `theme` is `custom`.
+    #[serde(default)]
+    pub palette: Option<TerminalPalette>,
     /// Maximum in-memory scrollback lines.
     pub scrollback: u32,
     /// Remote byte encoding.
@@ -372,7 +427,7 @@ impl Default for WorkspaceLayout {
         Self {
             left_width: 256,
             right_width: 288,
-            bottom_height: 180,
+            bottom_height: 260,
             bottom_open: true,
         }
     }
@@ -501,5 +556,6 @@ mod tests {
         .expect("M1 terminal payload should remain readable");
         assert_eq!(terminal.encoding, TerminalEncoding::Utf8);
         assert_eq!(terminal.keymap, TerminalKeymap::Xterm);
+        assert!(terminal.palette.is_none());
     }
 }

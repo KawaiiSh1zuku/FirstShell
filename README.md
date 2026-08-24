@@ -29,5 +29,6 @@ M0 的固定基准可通过 `powershell -ExecutionPolicy Bypass -File scripts/ru
 M1 自动化验收与延期到 M4 后的实机检查见 [`docs/verification/m1.md`](./docs/verification/m1.md)。
 M2 的终端运行时、安全边界、自动化与双视口视觉验收见 [`docs/verification/m2.md`](./docs/verification/m2.md)。
 M3 的文件工作流、复杂网络 Connector、隧道、安全与性能验收见 [`docs/verification/m3.md`](./docs/verification/m3.md)。
+M3 补充的自动 SFTP、目录树/地址栏、启动快速解锁和终端主题验收见 [`docs/verification/m3-supplement.md`](./docs/verification/m3-supplement.md)。
 
 设计、安全模型、数据模型、许可证结论与验收状态见 [`docs/README.md`](./docs/README.md)。项目以 [AGPL-3.0-only](./LICENSE) 发布。

@@ -103,6 +103,8 @@ M2 通过 Tauri `Channel` 将公开状态、脱敏错误、host key 证据和终
 
 M3 的 `DesktopOperations` 独立持有 SFTP、传输、隧道和拖放暂存注册表。传输队列最多 256 项、全局同时执行 2 项；暂停按 `pausing -> paused -> queued/running` 收敛并保留安全 partial，取消使用独立的 `cancelling -> cancelled`，恢复/重试创建新 generation；公开快照携带非敏感 generation，使前端不会用迟到的旧回执覆盖新进度。Vault 锁定通过取消令牌清理全部运行资源。原生文件选择和系统拖放产生的绝对本地路径只存在于 Rust：WebView 仅收到一次性批次 ID、文件名、大小、远程相对路径和进度。拖放批次最多 8 个、每批 64 个常规文件、5 分钟过期并在消费后删除。
 
+M3 补充的 companion coordinator 订阅每个持久化 SSH connection 的 ready pane 计数：首个 pane ready 后创建一个独立 SFTP workspace，同连接多分屏共享，最后一个 pane 退出后关闭。Operations 视觉折叠时组件仍挂载以维护生命周期；WebView 只保存 workspace ID 和公开快照，Rust 继续拥有认证、host key、rooted path 与关闭资源。自动 SFTP 失败与终端状态隔离。完整取舍见 [ADR-0007](./adr/0007-m3-companion-sftp-and-terminal-themes.md)。
+
 Tauri capability 按窗口标签和命令最小授权；不暴露通用 shell、任意文件系统或任意 HTTP API。
 
 ## 主要 UI 信息架构
@@ -120,9 +122,9 @@ Tauri capability 按窗口标签和命令最小授权；不暴露通用 shell、
 
 M2 中央工作区支持多标签和每标签最多四个独立分屏，分屏方向可按行或列切换；窄于 760 px 时列分屏自动改为纵向排列。每个 pane 独立管理 xterm、尺寸同步、host key 确认、重连与日志状态，终端模块动态加载以避免扩大主入口包。
 
-M3 将底部面板扩展为独立动态加载的 Operations 工作区，包含 rooted SFTP 面包屑、远程文件操作、传输队列和本地/远程/动态隧道。窄视口保持页面无横向溢出，SFTP 高密度工具栏在面板内部滚动；Operations 与终端分别形成独立 chunk，避免扩大初始入口或终端模块。
+M3 将底部面板扩展为独立动态加载的 Operations 工作区，包含 rooted SFTP、远程文件操作、传输队列和本地/远程/动态隧道。补充布局将默认高度调为 260 logical px，并使用单行地址/操作栏、左侧懒加载目录树和右侧文件表；传输策略进入弹出菜单，根外地址和 `..` 跳转在前端与 Rust 两层拒绝。窄视口保持页面无横向溢出，Operations 与终端分别形成独立 chunk，避免扩大初始入口或终端模块。
 
-应用外观提供浅色、深色和跟随系统三态切换，使用语义颜色 token 保持两套配色下的层级、焦点与错误状态一致。该非敏感偏好由前端本地保存并可在 Vault 锁定页切换；终端配色仍由 M2 的终端配置独立管理，不能把应用外观主题误作终端主题。
+应用外观提供浅色、深色和跟随系统三态切换，使用语义颜色 token 保持两套配色下的层级、焦点与错误状态一致。该非敏感偏好由前端本地保存并可在 Vault 锁定页切换；终端配色仍由加密 terminal profile 独立管理。M3 补充提供 FirstShell、Solarized、Nord、Dracula、Gruvbox、One Dark、High Contrast 预设和完整自定义 ANSI palette，不能把应用外观主题误作终端主题。
 
 ## 文件、监控与远程桌面
 

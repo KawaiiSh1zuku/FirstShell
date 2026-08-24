@@ -17,6 +17,28 @@ afterEach(() => {
 });
 
 describe("M1 workspace accessibility and vault state", () => {
+  it("automatically unlocks an initialized vault with the OS device key", async () => {
+    const bridge = createPreviewBridge();
+    let status: VaultStatus = {
+      initialized: true,
+      unlocked: false,
+      initializedThisRun: false,
+      keyringAvailable: true,
+      idleTimeoutSeconds: 900,
+    };
+    bridge.status = async () => status;
+    const unlock = vi.fn(async () => {
+      status = { ...status, unlocked: true };
+      return bridge.snapshot();
+    });
+    bridge.unlock = unlock;
+
+    render(<App bridge={bridge} />);
+    expect(await screen.findByText("Edge Gateway")).toBeTruthy();
+    expect(unlock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("本地仓库已锁定")).toBeNull();
+  });
+
   it("requires and confirms a recovery password before initialization", async () => {
     const bridge = createPreviewBridge();
     let status: VaultStatus = {
@@ -66,9 +88,8 @@ describe("M1 workspace accessibility and vault state", () => {
 
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
-    await user.click(await screen.findByRole("button", { name: "解锁" }));
     expect((await screen.findByRole("alert")).textContent).toContain("OS keyring key is unavailable");
-    await user.click(screen.getByRole("button", { name: "恢复口令" }));
+    expect(screen.getByRole("button", { name: "恢复口令" }).getAttribute("aria-pressed")).toBe("true");
     await user.type(screen.getByLabelText("恢复口令"), "mandatory recovery password");
     await user.click(screen.getByRole("button", { name: "解锁" }));
     expect(await screen.findByText("Edge Gateway")).toBeTruthy();

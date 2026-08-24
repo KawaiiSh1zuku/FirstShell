@@ -273,6 +273,7 @@ const previewSnapshot: WorkspaceSnapshot = {
       fontFamily: "Cascadia Mono",
       fontSize: 14,
       theme: "firstshell-dark",
+      palette: null,
       scrollback: 10000,
       encoding: "utf8",
       keymap: "xterm",
@@ -287,7 +288,7 @@ export function createPreviewBridge(): WorkspaceBridge {
   let layout: WorkspaceLayout = {
     leftWidth: 256,
     rightWidth: 288,
-    bottomHeight: 180,
+    bottomHeight: 260,
     bottomOpen: true,
   };
   let sequence = 1;
@@ -451,7 +452,7 @@ export function createPreviewBridge(): WorkspaceBridge {
     approveHostKey: async () => undefined,
     startSessionLog: async (sessionId) => ({ path: `preview/session-logs/${sessionId}.log` }),
     stopSessionLog: async () => undefined,
-    openSftp: async (connectionId, root) => ({ id: nextId("sftp"), connectionId, root: root || "/home/preview", state: "ready", hostKey: null }),
+    openSftp: async (connectionId, root) => ({ id: nextId("sftp"), connectionId, root: !root || root === "." ? "/home/preview" : root, state: "ready", hostKey: null }),
     approveSftpHostKey: async (workspaceId) => ({ id: workspaceId, connectionId: "connection-edge", root: "/home/preview", state: "ready", hostKey: null }),
     closeSftp: async () => undefined,
     listSftp: async (_workspaceId, path) => path ? [] : [

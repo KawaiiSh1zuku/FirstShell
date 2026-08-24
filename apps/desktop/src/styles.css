@@ -418,6 +418,7 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .activity-list time { color: var(--subtle); font-variant-numeric: tabular-nums; }
 
 .operations-panel { display: flex; flex: 0 0 var(--bottom-panel); min-height: 100px; flex-direction: column; background: #151715; }
+.operations-panel[hidden] { display: none; }
 .operations-header { display: flex; align-items: center; justify-content: space-between; height: 32px; padding-right: 7px; border-bottom: 1px solid var(--border); }
 .operations-header nav { display: flex; align-self: stretch; }
 .operations-header nav button { min-width: 68px; padding: 0 12px; border: 0; border-right: 1px solid var(--border); background: transparent; color: var(--subtle); cursor: pointer; font-size: 10px; }
@@ -427,17 +428,31 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .operations-activity { height: 100%; }
 .sftp-connect { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; padding: 12px; }
 .sftp-connect select { min-width: 210px; }
-.sftp-browser { display: grid; grid-template-rows: 31px 32px minmax(0, 1fr); height: 100%; min-width: 620px; }
-.sftp-toolbar, .sftp-actions, .transfer-toolbar { display: flex; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 1px solid var(--border); }
-.sftp-toolbar { justify-content: space-between; }
-.sftp-toolbar > div, .sftp-actions { display: flex; align-items: center; gap: 4px; }
-.breadcrumbs { min-width: 0; overflow: hidden; }
-.breadcrumbs button { padding: 2px 3px; border: 0; background: transparent; color: #9fc9ab; cursor: pointer; font: 10px "Cascadia Mono", Consolas, monospace; }
-.sftp-toolbar button, .sftp-actions button, .transfer-toolbar button, .tunnel-row button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-2); color: var(--muted); cursor: pointer; font-size: 10px; }
-.sftp-actions select { width: auto; height: 24px; padding: 0 20px 0 6px; font-size: 10px; }
-.sftp-actions > * { flex-shrink: 0; }
-.sftp-actions .danger { color: #e89991; }
-.sftp-drop-hint { margin-left: auto; color: var(--subtle); font-size: 9px; white-space: nowrap; }
+.sftp-browser { display: grid; grid-template-rows: 33px minmax(0, 1fr); height: 100%; min-width: 620px; }
+.sftp-toolbar, .transfer-toolbar { display: flex; position: relative; align-items: center; gap: 4px; padding: 0 6px; border-bottom: 1px solid var(--border); }
+.sftp-toolbar > button, .sftp-address button, .transfer-toolbar button, .tunnel-row button { display: inline-flex; align-items: center; gap: 4px; height: 24px; flex: 0 0 auto; padding: 0 7px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-2); color: var(--muted); cursor: pointer; font-size: 10px; }
+.sftp-toolbar > button.icon-button { width: 25px; justify-content: center; padding: 0; }
+.sftp-toolbar > button.danger { color: #e89991; }
+.sftp-address { display: flex; min-width: 110px; height: 24px; flex: 1; align-items: center; gap: 5px; padding-left: 7px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-1); color: var(--subtle); }
+.sftp-address input { min-width: 0; height: 22px; flex: 1; padding: 0; border: 0; background: transparent; color: var(--text); font: 10px "Cascadia Mono", Consolas, monospace; outline: 0; }
+.sftp-address input[aria-invalid="true"] { color: #ff9d94; }
+.sftp-address button { height: 22px; border-width: 0 0 0 1px; border-radius: 0; }
+.sftp-options { position: relative; flex: 0 0 auto; }
+.sftp-options summary { display: grid; place-items: center; width: 25px; height: 24px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-2); color: var(--muted); cursor: pointer; list-style: none; }
+.sftp-options summary::-webkit-details-marker { display: none; }
+.sftp-options > div { display: grid; position: absolute; z-index: 6; top: 28px; right: 0; width: 210px; gap: 8px; padding: 10px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface-2); box-shadow: 0 10px 30px rgb(0 0 0 / 35%); }
+.sftp-options label { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+.sftp-options select { height: 25px; font-size: 10px; }
+.sftp-options small { color: var(--subtle); font-size: 9px; }
+.sftp-body { display: grid; min-width: 0; min-height: 0; grid-template-columns: minmax(150px, 190px) minmax(0, 1fr); }
+.sftp-tree { min-width: 0; overflow: auto; border-right: 1px solid var(--border); padding: 4px 0; color: var(--muted); font-size: 10px; }
+.sftp-tree [role="group"] { padding-left: 13px; }
+.sftp-tree-root, .sftp-tree-node > div:first-child { display: flex; min-width: 0; align-items: center; height: 24px; }
+.sftp-tree button { display: flex; min-width: 0; height: 23px; align-items: center; gap: 5px; overflow: hidden; padding: 0 5px; border: 0; border-radius: 2px; background: transparent; color: inherit; cursor: default; font: inherit; }
+.sftp-tree button:not(.tree-toggle) { flex: 1; }
+.sftp-tree button.active, .sftp-tree button:not(.tree-toggle):hover { background: #253028; color: var(--text); }
+.sftp-tree .tree-toggle { width: 22px; flex: 0 0 22px; justify-content: center; padding: 0; color: var(--subtle); }
+.sftp-tree button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sftp-table { min-height: 0; overflow: auto; }
 .sftp-row { display: grid; grid-template-columns: minmax(220px, 1fr) 100px 64px; width: 100%; min-height: 26px; align-items: center; padding: 0 10px; border: 0; border-bottom: 1px solid #222522; background: transparent; color: var(--muted); text-align: left; font: 10px "Cascadia Mono", Consolas, monospace; }
 button.sftp-row { cursor: default; }
@@ -526,6 +541,14 @@ button.sftp-row:hover, button.sftp-row.selected { background: #253028; color: va
 .profile-row > div:first-child { display: grid; min-width: 0; }
 .profile-row strong { overflow: hidden; color: #d7dcd7; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .profile-row span { color: var(--subtle); font-size: 10px; }
+.terminal-theme-preview { display: flex; min-height: 54px; align-items: center; gap: 1px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 4px; font: 11px "Cascadia Mono", Consolas, monospace; }
+.terminal-theme-preview i { margin-left: 8px; padding: 2px 4px; font-style: normal; }
+.terminal-palette-editor { min-width: 0; margin: 0; padding: 10px; border: 1px solid var(--border); border-radius: 4px; }
+.terminal-palette-editor legend { padding: 0 5px; color: var(--muted); font-size: 10px; }
+.palette-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 10px; }
+.palette-grid label { display: grid; grid-template-columns: minmax(44px, 1fr) 28px 58px; align-items: center; gap: 5px; }
+.palette-grid input[type="color"] { width: 28px; height: 22px; padding: 1px; border: 1px solid var(--border); background: transparent; }
+.palette-grid code { color: var(--subtle); font-size: 9px; }
 .row-actions { gap: 2px; flex: 0 0 auto; }
 .settings-content > .entity-form { padding: 3px 0 0; }
 
@@ -574,6 +597,8 @@ button.sftp-row:hover, button.sftp-row.selected { background: #253028; color: va
 [data-resolved-theme="light"] .terminal-idle small { color: #909991; }
 [data-resolved-theme="light"] .activity-panel { background: #f5f7f5; }
 [data-resolved-theme="light"] .operations-panel { background: #f5f7f5; }
+[data-resolved-theme="light"] .sftp-tree button.active,
+[data-resolved-theme="light"] .sftp-tree button:not(.tree-toggle):hover { background: #dce9e0; color: #153d27; }
 [data-resolved-theme="light"] .sftp-row, [data-resolved-theme="light"] .transfer-row, [data-resolved-theme="light"] .tunnel-row { border-bottom-color: #e1e6e2; }
 [data-resolved-theme="light"] button.sftp-row:hover, [data-resolved-theme="light"] button.sftp-row.selected { background: #dce9e0; }
 [data-resolved-theme="light"] .activity-list > div:not(.empty-list) { border-bottom-color: #e1e6e2; }

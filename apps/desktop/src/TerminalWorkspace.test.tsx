@@ -5,9 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPreviewBridge } from "./bridge";
 import { TerminalWorkspace } from "./TerminalWorkspace";
 import type { ConnectionProfile, DesktopSessionEvent, HostKeyEvidence, TerminalProfile } from "./types";
+import { DEFAULT_CUSTOM_PALETTE } from "./terminalThemes";
 
 const xtermMock = vi.hoisted(() => {
   const terminalInstances: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+  const terminalOptions: unknown[] = [];
   class MockTerminal {
     cols = 100;
     rows = 30;
@@ -18,9 +20,9 @@ const xtermMock = vi.hoisted(() => {
     loadAddon = vi.fn();
     open = vi.fn();
     onData = vi.fn(() => ({ dispose: vi.fn() }));
-    constructor() { terminalInstances.push(this); }
+    constructor(options: unknown) { terminalInstances.push(this); terminalOptions.push(options); }
   }
-  return { terminalInstances, MockTerminal };
+  return { terminalInstances, terminalOptions, MockTerminal };
 });
 
 vi.mock("@xterm/xterm", () => ({ Terminal: xtermMock.MockTerminal }));
@@ -59,6 +61,7 @@ const profile: TerminalProfile = {
   fontFamily: "Cascadia Mono",
   fontSize: 14,
   theme: "firstshell-dark",
+  palette: null,
   scrollback: 10000,
   encoding: "utf8",
   keymap: "xterm",
@@ -67,6 +70,7 @@ const profile: TerminalProfile = {
 afterEach(() => {
   cleanup();
   xtermMock.terminalInstances.length = 0;
+  xtermMock.terminalOptions.length = 0;
   vi.restoreAllMocks();
 });
 
@@ -77,7 +81,7 @@ describe("M2 terminal workspace", () => {
     const open = vi.spyOn(bridge, "openTerminal");
     const close = vi.spyOn(bridge, "closeTerminal");
     const activity = vi.fn();
-    render(<StrictMode><TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={activity} onReadyCountChange={() => undefined} /></StrictMode>);
+    render(<StrictMode><TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={activity} onReadyCountChange={() => undefined} onReadyConnectionsChange={() => undefined} /></StrictMode>);
     await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(activity).toHaveBeenCalledTimes(1));
@@ -89,14 +93,25 @@ describe("M2 terminal workspace", () => {
     const open = vi.spyOn(bridge, "openTerminal");
     const close = vi.spyOn(bridge, "closeTerminal");
     const user = userEvent.setup();
-    const view = render(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={() => undefined} onReadyCountChange={() => undefined} />);
+    const readyConnections = vi.fn();
+    const view = render(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={() => undefined} onReadyCountChange={() => undefined} onReadyConnectionsChange={readyConnections} />);
     await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("已连接")).toBeTruthy();
+    await waitFor(() => expect(readyConnections).toHaveBeenCalledWith([connection.id]));
     await user.click(screen.getByRole("button", { name: "左右分屏" }));
     await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
     expect(xtermMock.terminalInstances).toHaveLength(2);
     view.unmount();
     await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
+  });
+
+  it("passes a validated custom ANSI palette to xterm", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const bridge = createPreviewBridge();
+    const custom = { ...profile, theme: "custom", palette: { ...DEFAULT_CUSTOM_PALETTE, background: "#123456", brightRed: "#fedcba" } };
+    render(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[custom]} onActivity={() => undefined} onReadyCountChange={() => undefined} onReadyConnectionsChange={() => undefined} />);
+    await screen.findByText("已连接");
+    expect(xtermMock.terminalOptions[0]).toMatchObject({ theme: { background: "#123456", brightRed: "#fedcba" } });
   });
 
   it("requires explicit approval for pending host-key evidence", async () => {
@@ -118,7 +133,7 @@ describe("M2 terminal workspace", () => {
     };
     const approve = vi.spyOn(bridge, "approveHostKey");
     const user = userEvent.setup();
-    render(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={() => undefined} onReadyCountChange={() => undefined} />);
+    render(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={() => undefined} onReadyCountChange={() => undefined} onReadyConnectionsChange={() => undefined} />);
     expect(await screen.findByText("首次连接确认")).toBeTruthy();
     expect(screen.getByText("SHA256:new")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "信任并重连" }));
@@ -131,7 +146,7 @@ describe("M2 terminal workspace", () => {
     const start = vi.spyOn(bridge, "startSessionLog");
     const stop = vi.spyOn(bridge, "stopSessionLog");
     const user = userEvent.setup();
-    render(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={() => undefined} onReadyCountChange={() => undefined} />);
+    render(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={() => undefined} onReadyCountChange={() => undefined} onReadyConnectionsChange={() => undefined} />);
     await screen.findByText("已连接");
     expect(start).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "开启会话日志" }));

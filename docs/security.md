@@ -27,6 +27,8 @@ WebView 永远不接收私钥、密码、仓库主密钥或同步口令。服务
 
 首次初始化时生成 32 字节随机 Vault Key。用户必须设置至少 12 字节的恢复口令；客户端以 Argon2id 派生的恢复密钥和 XChaCha20-Poly1305 包装 Vault Key，将版本化恢复 slot 保存在 SQLite。操作系统密钥环保存同一 Vault Key，作为日常快速解锁路径；密钥环丢失时，正确的恢复口令可以解包 Vault Key 并重新登记到密钥环。SQLite 不保存可直接解密的主密钥。
 
+程序冷启动在确认 Vault 已初始化但未解锁后自动尝试 OS keyring 快速解锁；成功前不渲染已解密工作区。keyring 缺失、读取失败或 verifier 不匹配时 fail-closed，界面直接回落到需要用户输入的恢复口令表单并显示脱敏错误。恢复口令不持久化、不自动填充，也不能因“自动回落”而新增明文或设备侧缓存。
+
 每条敏感记录使用 HKDF 从 Vault Key 派生记录子密钥，派生上下文包含实体类型、稳定 ID、schema 版本和密钥版本。数据使用 XChaCha20-Poly1305 加密，每次写入生成唯一随机 nonce；表名、记录 ID、schema 版本和 revision 进入 AAD，防止密文跨记录替换。
 
 | 密钥 | 来源 | 用途 | 持久化方式 |
@@ -76,10 +78,13 @@ M3 的 SOCKS5/HTTP CONNECT 代理密码采用独立 keyring 项，协议错误�
 - 前端错误对象和遥测不能包含秘密、终端输入或完整远程路径。
 - 原生文件选择与拖放的绝对本地路径不得进入 WebView DTO；前端只接收一次性批次 ID、名称和大小。
 - 浅色、深色和跟随系统属于非敏感界面偏好，可保存在 WebView `localStorage`；Vault 锁定时必须从 DOM 清除连接名称、地址、用户名、标签和备注等已解密字段。
+- 终端预设 ID、自定义前景/背景/ANSI palette 属于加密 terminal profile，不进入 `localStorage`。Rust 限制自定义颜色为完整 `#RRGGBB`，避免向 xterm 主题接口传入任意 CSS 表达式。
 
 ## 文件与命令安全
 
 本地和远程路径都按目标平台语义规范化，拒绝越过用户选择根目录的路径。M3 不隐式跟随远程符号链接；链接本身可列出和删除，进入链接路径或对链接 chmod 会失败关闭。上传和下载使用同目录临时文件、长度限制、可选 SHA-256 和替换策略；暂停按 `pausing -> paused` 收敛并保留安全 partial，恢复进入 `queued/running`，取消则使用独立的 `cancelling -> cancelled`；续传前重新核对长度，上传还检查本地源在传输期间是否变化。服务器没有 `posix-rename` 扩展时，覆盖既有远程文件存在 remove 后 rename 的极短窗口，不能文档化为严格原子覆盖。
+
+companion SFTP 只在持久化 SSH connection 的终端 ready 后触发，失败不改变终端状态。同连接多 pane 共享一个 SFTP workspace；用户关闭、最后一个 pane 退出、Vault 锁定或应用退出都会回收。可输入地址栏先拒绝 canonical root 外绝对地址和 `..`，Rust `SftpWorkspace` 仍执行最终 rooted path 与 symlink 检查。
 
 监控探针使用固定模板与结构化参数，禁止把主机返回值重新拼入 shell。代码片段参数按类型替换，默认只插入终端供用户检查，自动执行必须逐片段显式授权。
 
