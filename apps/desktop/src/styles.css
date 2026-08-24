@@ -482,6 +482,10 @@ button.sftp-row:hover, button.sftp-row.selected { background: #253028; color: va
 .inspector-content { min-height: 0; padding: 18px 16px; overflow: auto; }
 .inspector-icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid #3b5c47; border-radius: 5px; background: #1c3023; color: var(--accent); }
 .inspector-content h2 { margin: 12px 0 8px; overflow-wrap: anywhere; color: #e7ebe7; font-size: 15px; font-weight: 600; }
+.inspector-identity { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.inspector-identity .inspector-icon { flex: 0 0 36px; }
+.inspector-identity h2 { min-width: 0; flex: 1; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-identity .kind-badge { flex: 0 0 auto; }
 .kind-badge { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border: 1px solid #41614c; border-radius: 3px; color: #9fc9ab; font-size: 9px; }
 .inspector-content dl { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 9px 10px; margin: 20px 0; font-size: 11px; }
 .inspector-content dt { color: var(--subtle); }

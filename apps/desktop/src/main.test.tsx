@@ -161,6 +161,9 @@ describe("M1 workspace accessibility and vault state", () => {
     render(<App bridge={bridge} />);
 
     await user.click(await screen.findByRole("treeitem", { name: /^Edge Gateway/ }));
+    const identity = screen.getByRole("heading", { name: "Edge Gateway" }).parentElement;
+    expect(identity?.classList.contains("inspector-identity")).toBe(true);
+    expect(identity?.textContent).toContain("SSH");
     expect(screen.getByText("终端连接后自动启动低开销监控")).toBeTruthy();
     await user.click(await screen.findByRole("button", { name: "模拟终端就绪" }));
 
