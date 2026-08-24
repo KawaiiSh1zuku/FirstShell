@@ -10,6 +10,7 @@
 | Web UI | React、Vite | MIT | 与 AGPL-3.0-only 兼容 |
 | UI 与测试 | `lucide-react`、Vitest、Testing Library、jsdom | MIT；间接依赖含 BSD-2-Clause、BlueOak-1.0.0 | 与 AGPL-3.0-only 兼容，BSD/BlueOak 文本进入发布 NOTICE |
 | SSH/SFTP | `russh`、`russh-sftp` | Apache-2.0 | 与 AGPL-3.0-only 兼容，保留 NOTICE 要求 |
+| M3 Connector 与校验 | `base64`、`url`、`sha2`、`winreg`、`tokio-util` | MIT OR Apache-2.0；MIT | 与 AGPL-3.0-only 兼容；均已存在于或通过兼容许可证进入锁树 |
 | 终端 | `@xterm/xterm`、`@xterm/addon-fit`、`portable-pty` | MIT | 与 AGPL-3.0-only 兼容；分发时保留上游许可证文本 |
 | 终端编码 | `encoding_rs` | (Apache-2.0 OR MIT) AND BSD-3-Clause | 与 AGPL-3.0-only 兼容；保留 Apache/MIT/BSD 文本与适用 notice |
 | 原生秘密输入 | `tinyfiledialogs` | zlib-acknowledgement | 与 AGPL-3.0-only 兼容；保留源文件声明，并在产品 NOTICE 中致谢 tinyfiledialogs |

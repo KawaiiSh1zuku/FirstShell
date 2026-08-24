@@ -9,16 +9,17 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use firstshell_domain::{
-    ConnectionId, ConnectionKind, ErrorCode, PublicError, SshAuthenticationKind,
-    TerminalEncoding as ProfileEncoding,
+    ConnectionId, ConnectionKind, ErrorCode, ProxyDnsMode as ProfileProxyDnsMode, ProxyId,
+    ProxyKind, PublicError, SshAuthenticationKind, TerminalEncoding as ProfileEncoding,
 };
 use firstshell_session::{
     LocalShell, LocalTerminalFactory, SessionError, SessionEvent, SessionEventSink, SessionId,
     SessionRegistry, SessionSnapshot, TerminalSize,
 };
 use firstshell_ssh::{
-    HostKeyEvidence, OpenSshFallbackSpec, SshAuthentication, SshCompatibilityFactory,
-    SshConnectSpec, SshSessionFactory, TerminalEncoding, private_key_requires_passphrase,
+    HostKeyEvidence, JumpHostSpec, OpenSshFallbackSpec, ProxyDnsMode, ProxyEndpoint, ProxyRoute,
+    SshAuthentication, SshCompatibilityFactory, SshConnectSpec, SshSessionFactory,
+    TerminalEncoding, private_key_requires_passphrase,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
@@ -30,6 +31,7 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::commands::DesktopState;
 
 const CREDENTIAL_SERVICE: &str = "FirstShell SSH";
+const PROXY_CREDENTIAL_SERVICE: &str = "FirstShell Proxy";
 const LOG_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const MAX_SSH_SECRET_BYTES: usize = 4096;
 
@@ -40,7 +42,7 @@ pub struct DesktopSessions {
     registry: SessionRegistry,
     ssh_factories: Mutex<HashMap<SessionId, Arc<SshSessionFactory>>>,
     log_senders: LogSenders,
-    known_hosts: PathBuf,
+    pub(crate) known_hosts: PathBuf,
     log_directory: PathBuf,
 }
 
@@ -198,6 +200,67 @@ pub async fn connection_credential_status(
 }
 
 #[tauri::command]
+pub async fn configure_proxy_credential(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    proxy_id: ProxyId,
+) -> Result<bool, PublicError> {
+    authorize(&window)?;
+    let proxy = find_proxy(&state, proxy_id).await?;
+    if !matches!(proxy.kind, ProxyKind::Socks5 | ProxyKind::HttpConnect)
+        || proxy.username.is_empty()
+    {
+        return Err(public(
+            ErrorCode::InvalidState,
+            "proxy does not use username/password authentication",
+        ));
+    }
+    let account = proxy_credential_account(proxy_id);
+    tokio::task::spawn_blocking(move || {
+        let Some(secret) = tinyfiledialogs::password_box(
+            "FirstShell proxy credential",
+            "Enter the proxy password. It is written directly to the OS credential store and never returned to the WebView.",
+        ) else {
+            return Ok(false);
+        };
+        let secret = validated_native_secret(secret)?;
+        keyring::Entry::new(PROXY_CREDENTIAL_SERVICE, &account)
+            .and_then(|entry| entry.set_password(&secret))
+            .map_err(|_| public(ErrorCode::Internal, "proxy credential store is unavailable"))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|_| public(ErrorCode::Internal, "native proxy credential prompt stopped"))?
+}
+
+#[tauri::command]
+pub async fn proxy_credential_status(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    proxy_id: ProxyId,
+) -> Result<bool, PublicError> {
+    authorize(&window)?;
+    let proxy = find_proxy(&state, proxy_id).await?;
+    if !matches!(proxy.kind, ProxyKind::Socks5 | ProxyKind::HttpConnect)
+        || proxy.username.is_empty()
+    {
+        return Ok(false);
+    }
+    let account = proxy_credential_account(proxy_id);
+    tokio::task::spawn_blocking(move || {
+        Ok(keyring::Entry::new(PROXY_CREDENTIAL_SERVICE, &account)
+            .and_then(|entry| entry.get_password())
+            .map(|mut secret| {
+                secret.zeroize();
+                true
+            })
+            .unwrap_or(false))
+    })
+    .await
+    .map_err(|_| public(ErrorCode::Internal, "proxy credential status check stopped"))?
+}
+
+#[tauri::command]
 pub async fn open_terminal_session(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
@@ -207,32 +270,11 @@ pub async fn open_terminal_session(
 ) -> Result<SessionSnapshot, PublicError> {
     authorize(&window)?;
     let connection = find_connection(&state, connection_id).await?;
-    let profile = state
-        .workspace
-        .snapshot()
-        .await?
-        .terminal_profiles
-        .into_iter()
-        .find(|profile| Some(profile.id) == connection.terminal_profile_id);
-    let encoding = match profile.map(|profile| profile.encoding).unwrap_or_default() {
-        ProfileEncoding::Utf8 => TerminalEncoding::Utf8,
-        ProfileEncoding::Gb18030 => TerminalEncoding::Gb18030,
-        ProfileEncoding::Big5 => TerminalEncoding::Big5,
-    };
     let sink = desktop_session_sink(Arc::clone(&state.sessions.log_senders), on_event);
 
     match connection.kind {
         ConnectionKind::Ssh => {
-            let authentication = resolve_authentication(&connection).await?;
-            let factory = Arc::new(SshSessionFactory::new(SshConnectSpec {
-                host: connection.host.clone(),
-                port: connection.port,
-                username: connection.username.clone(),
-                authentication,
-                known_hosts: state.sessions.known_hosts.clone(),
-                encoding,
-                allow_legacy_algorithms: connection.allow_legacy_algorithms,
-            }));
+            let factory = resolve_ssh_connection(&state, connection_id).await?.factory;
             let fallback = connection.openssh_fallback.then(|| OpenSshFallbackSpec {
                 host: connection.host,
                 port: connection.port,
@@ -292,6 +334,8 @@ pub async fn open_quick_terminal(
         known_hosts: state.sessions.known_hosts.clone(),
         encoding: TerminalEncoding::Utf8,
         allow_legacy_algorithms: input.allow_legacy_algorithms,
+        route: ProxyRoute::Direct,
+        jump_hosts: Vec::new(),
     }));
     let fallback = input.openssh_fallback.then(|| OpenSshFallbackSpec {
         host: input.host,
@@ -529,7 +573,7 @@ pub fn stop_session_log(
 }
 
 async fn find_connection(
-    state: &State<'_, DesktopState>,
+    state: &DesktopState,
     id: ConnectionId,
 ) -> Result<firstshell_domain::ConnectionProfile, PublicError> {
     state
@@ -540,6 +584,146 @@ async fn find_connection(
         .into_iter()
         .find(|connection| connection.id == id)
         .ok_or_else(|| public(ErrorCode::NotFound, "connection not found"))
+}
+
+async fn find_proxy(
+    state: &DesktopState,
+    id: ProxyId,
+) -> Result<firstshell_domain::ProxyProfile, PublicError> {
+    state
+        .workspace
+        .snapshot()
+        .await?
+        .proxies
+        .into_iter()
+        .find(|proxy| proxy.id == id)
+        .ok_or_else(|| public(ErrorCode::NotFound, "proxy not found"))
+}
+
+pub(crate) struct ResolvedSshConnection {
+    pub(crate) factory: Arc<SshSessionFactory>,
+}
+
+pub(crate) async fn resolve_ssh_connection(
+    state: &DesktopState,
+    connection_id: ConnectionId,
+) -> Result<ResolvedSshConnection, PublicError> {
+    let workspace = state.workspace.snapshot().await?;
+    let connection = workspace
+        .connections
+        .iter()
+        .find(|candidate| candidate.id == connection_id)
+        .cloned()
+        .ok_or_else(|| public(ErrorCode::NotFound, "connection not found"))?;
+    if connection.kind != ConnectionKind::Ssh {
+        return Err(public(ErrorCode::InvalidState, "connection is not SSH"));
+    }
+    let profile = workspace
+        .terminal_profiles
+        .iter()
+        .find(|profile| Some(profile.id) == connection.terminal_profile_id);
+    let encoding = match profile.map(|profile| profile.encoding).unwrap_or_default() {
+        ProfileEncoding::Utf8 => TerminalEncoding::Utf8,
+        ProfileEncoding::Gb18030 => TerminalEncoding::Gb18030,
+        ProfileEncoding::Big5 => TerminalEncoding::Big5,
+    };
+    let authentication = resolve_authentication(&connection).await?;
+    let route = resolve_proxy_route(&workspace, &connection).await?;
+    let jump_hosts = resolve_jump_hosts(&workspace, &connection).await?;
+    Ok(ResolvedSshConnection {
+        factory: Arc::new(SshSessionFactory::new(SshConnectSpec {
+            host: connection.host.clone(),
+            port: connection.port,
+            username: connection.username.clone(),
+            authentication,
+            known_hosts: state.sessions.known_hosts.clone(),
+            encoding,
+            allow_legacy_algorithms: connection.allow_legacy_algorithms,
+            route,
+            jump_hosts,
+        })),
+    })
+}
+
+async fn resolve_proxy_route(
+    workspace: &firstshell_domain::WorkspaceSnapshot,
+    connection: &firstshell_domain::ConnectionProfile,
+) -> Result<ProxyRoute, PublicError> {
+    let Some(proxy_id) = connection.proxy_id else {
+        return Ok(ProxyRoute::Direct);
+    };
+    let proxy = workspace
+        .proxies
+        .iter()
+        .find(|proxy| proxy.id == proxy_id)
+        .ok_or_else(|| public(ErrorCode::InvalidState, "connection proxy is unavailable"))?;
+    match proxy.kind {
+        ProxyKind::Direct => Ok(ProxyRoute::Direct),
+        ProxyKind::System => Ok(ProxyRoute::System),
+        ProxyKind::Socks5 | ProxyKind::HttpConnect => {
+            let password = if proxy.username.is_empty() {
+                None
+            } else {
+                let account = proxy_credential_account(proxy.id);
+                let secret = tokio::task::spawn_blocking(move || {
+                    keyring::Entry::new(PROXY_CREDENTIAL_SERVICE, &account)
+                        .and_then(|entry| entry.get_password())
+                })
+                .await
+                .map_err(|_| public(ErrorCode::Internal, "proxy credential lookup stopped"))?
+                .map_err(|_| {
+                    public(
+                        ErrorCode::InvalidState,
+                        "configure the native proxy credential before connecting",
+                    )
+                })?;
+                Some(validated_native_secret(secret)?)
+            };
+            let endpoint = ProxyEndpoint {
+                host: proxy.host.clone(),
+                port: proxy.port,
+                username: proxy.username.clone(),
+                password,
+                dns_mode: match proxy.dns_mode {
+                    ProfileProxyDnsMode::Remote => ProxyDnsMode::Remote,
+                    ProfileProxyDnsMode::Local => ProxyDnsMode::Local,
+                },
+            };
+            Ok(if proxy.kind == ProxyKind::Socks5 {
+                ProxyRoute::Socks5(endpoint)
+            } else {
+                ProxyRoute::HttpConnect(endpoint)
+            })
+        }
+    }
+}
+
+async fn resolve_jump_hosts(
+    workspace: &firstshell_domain::WorkspaceSnapshot,
+    connection: &firstshell_domain::ConnectionProfile,
+) -> Result<Vec<JumpHostSpec>, PublicError> {
+    let mut jumps = Vec::with_capacity(connection.jump_host_ids.len());
+    for id in &connection.jump_host_ids {
+        let jump = workspace
+            .connections
+            .iter()
+            .find(|candidate| candidate.id == *id)
+            .ok_or_else(|| public(ErrorCode::InvalidState, "jump host is unavailable"))?;
+        if jump.kind != ConnectionKind::Ssh {
+            return Err(public(
+                ErrorCode::InvalidState,
+                "jump host is not an SSH connection",
+            ));
+        }
+        jumps.push(JumpHostSpec {
+            host: jump.host.clone(),
+            port: jump.port,
+            username: jump.username.clone(),
+            authentication: resolve_authentication(jump).await?,
+            allow_legacy_algorithms: jump.allow_legacy_algorithms,
+        });
+    }
+    Ok(jumps)
 }
 
 async fn resolve_authentication(
@@ -714,6 +898,10 @@ fn credential_account(id: ConnectionId) -> String {
     format!("ssh:{id}")
 }
 
+fn proxy_credential_account(id: ProxyId) -> String {
+    format!("proxy:{id}")
+}
+
 fn desktop_session_sink(
     logs: LogSenders,
     on_event: Channel<DesktopSessionEvent>,
@@ -753,7 +941,7 @@ fn map_session(error: SessionError) -> PublicError {
     }
 }
 
-fn public(code: ErrorCode, message: impl Into<String>) -> PublicError {
+pub(crate) fn public(code: ErrorCode, message: impl Into<String>) -> PublicError {
     PublicError::new(code, message)
 }
 

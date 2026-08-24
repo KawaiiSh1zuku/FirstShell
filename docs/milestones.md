@@ -18,7 +18,7 @@
 | M0 | 架构冻结与关键技术验证 | 无 | Complete |
 | M1 | 桌面骨架、数据层与安全仓库 | M0 | Complete |
 | M2 | 可日常使用的 SSH 终端 | M1 | Complete |
-| M3 | SFTP、代理、跳板与隧道 | M2 | Not started |
+| M3 | SFTP、代理、跳板与隧道 | M2 | Complete |
 | M4 | 主机监控与效率工具 | M3 | Not started |
 | M5 | 端到端加密同步 | M1；全量集成依赖 M4 | Not started |
 | M6 | RDP 与自托管加速中继 | M2 | Not started |
@@ -98,13 +98,15 @@ M5 的协议和服务端可以在 M2-M4 期间并行开发，但只有覆盖最�
 
 主要交付：
 
-- 同工作区 SFTP 浏览器、双通道调度和有界传输队列。
-- 上传、下载、取消、重试、续传、临时文件、原子替换和可选校验。
-- 文件新建、重命名、删除、权限和明确的符号链接策略。
-- Direct、SOCKS5、HTTP CONNECT、系统代理和 SSH 跳板链 Connector。
-- 本地、远程、动态端口转发，监听范围和暴露风险提示。
+- [x] 同工作区 SFTP 浏览器、双通道调度和有界传输队列。
+- [x] 上传、下载、暂停、取消、重试、续传、临时文件、能力受限的安全替换和可选校验。
+- [x] 文件新建、重命名、删除、权限和明确的符号链接策略。
+- [x] Direct、SOCKS5、HTTP CONNECT、系统代理和 SSH 跳板链 Connector。
+- [x] 本地、远程、动态端口转发，监听范围和暴露风险提示。
 
 退出门槛：SFTP 达到 OpenSSH 基线 85% 以上；大文件传输不破坏终端交互预算；路径穿越、跳板循环、代理认证、断点恢复和端口暴露测试通过。
+
+验收证据：[M3 验收记录](./verification/m3.md)。Release 基准在同一受控 SSH/SFTP 服务上以 Windows OpenSSH `sftp.exe` 为基线；系统代理按连接固化静态结果，PAC JavaScript 不在 M3 边界内。
 
 ## M4 主机监控与效率工具
 

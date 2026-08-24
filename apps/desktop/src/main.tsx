@@ -51,6 +51,7 @@ import { VaultGate } from "./VaultGate";
 import "./styles.css";
 
 const TerminalWorkspace = lazy(() => import("./TerminalWorkspace").then((module) => ({ default: module.TerminalWorkspace })));
+const OperationsWorkspace = lazy(() => import("./OperationsWorkspace").then((module) => ({ default: module.OperationsWorkspace })));
 
 type EntityDialogState =
   | { kind: "folder"; value?: Folder }
@@ -163,6 +164,14 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
   const [themeMode, setThemeMode] = useThemeMode();
   const [readySessions, setReadySessions] = useState(0);
   const addActivity = useCallback((message: string) => dispatch({ type: "activity", message }), []);
+  const configureProxyCredential = useCallback(
+    (value: ProxyProfile) => bridge.configureProxyCredential(value.id),
+    [bridge],
+  );
+  const proxyCredentialStatus = useCallback(
+    (value: ProxyProfile) => bridge.proxyCredentialStatus(value.id),
+    [bridge],
+  );
 
   const perform = useCallback(async <T,>(operation: () => Promise<T>, activity?: string): Promise<T> => {
     dispatch({ type: "patch", value: { busy: true, error: null } });
@@ -385,6 +394,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
       port: input.port,
       username: input.username,
       proxyId: null,
+      jumpHostIds: [],
       terminalProfileId: snapshot.terminalProfiles[0]?.id ?? null,
       authentication: input.authentication,
       privateKeyPath: input.privateKeyPath,
@@ -474,10 +484,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         </div>
         {state.layout.bottomOpen && <>
           <PanelSeparator orientation="horizontal" label="调整活动面板高度" onPointerDown={(event) => beginResize("bottom", event)} onNudge={(delta) => nudgeLayout("bottom", delta)} />
-          <section className="activity-panel" aria-label="活动">
-            <div className="activity-header"><span><Activity size={14} />活动</span><button className="icon-button" type="button" aria-label="收起活动面板" title="收起" onClick={() => void saveLayout({ ...state.layout, bottomOpen: false })}><ChevronDown size={15} /></button></div>
-            <div className="activity-list">{state.activities.map((item) => <div key={item.id}><time>{item.time}</time><span>{item.message}</span></div>)}{state.activities.length === 0 && <div className="empty-list">暂无活动</div>}</div>
-          </section>
+          <Suspense fallback={<section className="activity-panel"><div className="empty-list">正在加载文件与网络工具</div></section>}><OperationsWorkspace bridge={bridge} connections={snapshot.connections} activeConnectionId={activeConnection?.id ?? null} activities={state.activities} onActivity={addActivity} onCollapse={() => void saveLayout({ ...state.layout, bottomOpen: false })} /></Suspense>
         </>}
       </section>
 
@@ -493,11 +500,11 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         <span>{snapshot.connections.length} 个连接</span>
         {!state.layout.bottomOpen && <button type="button" onClick={() => void saveLayout({ ...state.layout, bottomOpen: true })}><Activity size={13} />活动</button>}
         {state.undoDelete && <button type="button" aria-label={`撤销删除 ${state.undoDelete.label}`} onClick={() => void undoDelete()}><Undo2 size={13} />撤销删除</button>}
-        <span>M2</span>
+        <span>M3</span>
       </footer>
 
       {state.entityDialog && <EntityDialog dialog={state.entityDialog} snapshot={snapshot} busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { entityDialog: null, error: null } })} onSaveFolder={saveFolder} onSaveConnection={saveConnection} />}
-      {state.settingsOpen && <SettingsDialog snapshot={snapshot} busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { settingsOpen: false, error: null } })} onSaveProxy={async (input: ProxyInput, existing?: ProxyProfile) => { await perform(() => existing ? bridge.updateProxy(existing.id, existing.revision, input) : bridge.createProxy(input), existing ? "代理已更新" : "代理已创建"); await refresh(); }} onDeleteProxy={async (value) => { if (!window.confirm(`删除“${value.name}”？`)) return; await perform(() => bridge.deleteProxy(value.id, value.revision), "代理已删除"); await refresh(); }} onSaveTerminal={async (input: TerminalProfileInput, existing?: TerminalProfile) => { await perform(() => existing ? bridge.updateTerminal(existing.id, existing.revision, input) : bridge.createTerminal(input), existing ? "终端配置已更新" : "终端配置已创建"); await refresh(); }} onDeleteTerminal={async (value) => { if (!window.confirm(`删除“${value.name}”？`)) return; await perform(() => bridge.deleteTerminal(value.id, value.revision), "终端配置已删除"); await refresh(); }} />}
+      {state.settingsOpen && <SettingsDialog snapshot={snapshot} busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { settingsOpen: false, error: null } })} onSaveProxy={async (input: ProxyInput, existing?: ProxyProfile) => { await perform(() => existing ? bridge.updateProxy(existing.id, existing.revision, input) : bridge.createProxy(input), existing ? "代理已更新" : "代理已创建"); await refresh(); }} onDeleteProxy={async (value) => { if (!window.confirm(`删除“${value.name}”？`)) return; await perform(() => bridge.deleteProxy(value.id, value.revision), "代理已删除"); await refresh(); }} onConfigureProxyCredential={configureProxyCredential} proxyCredentialStatus={proxyCredentialStatus} onSaveTerminal={async (input: TerminalProfileInput, existing?: TerminalProfile) => { await perform(() => existing ? bridge.updateTerminal(existing.id, existing.revision, input) : bridge.createTerminal(input), existing ? "终端配置已更新" : "终端配置已创建"); await refresh(); }} onDeleteTerminal={async (value) => { if (!window.confirm(`删除“${value.name}”？`)) return; await perform(() => bridge.deleteTerminal(value.id, value.revision), "终端配置已删除"); await refresh(); }} />}
       {state.backupOpen && <BackupDialog busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { backupOpen: false, error: null } })} onExport={(password) => perform(() => bridge.exportWorkspace(password), "加密备份已导出")} onValidate={(fileName, password) => perform(() => bridge.validateImport(fileName, password), "备份验证通过")} onRestore={async (fileName, password) => { const result = await perform(() => bridge.restoreImport(fileName, password), "工作区已恢复"); await refresh(); return result; }} />}
       {state.quickConnectOpen && <QuickConnectDialog busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { quickConnectOpen: false, error: null } })} onConnect={openQuickConnection} />}
     </main>

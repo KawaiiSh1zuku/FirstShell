@@ -34,6 +34,7 @@ export function EntityDialog(props: EntityDialogProps) {
   const [port, setPort] = useState(existingConnection?.port ?? 22);
   const [username, setUsername] = useState(existingConnection?.username ?? "");
   const [proxyId, setProxyId] = useState(existingConnection?.proxyId ?? "");
+  const [jumpHostIds, setJumpHostIds] = useState<string[]>(existingConnection?.jumpHostIds ?? []);
   const [terminalId, setTerminalId] = useState(existingConnection?.terminalProfileId ?? "");
   const [authentication, setAuthentication] = useState<ConnectionInput["authentication"]>(existingConnection?.authentication ?? "agent");
   const [privateKeyPath, setPrivateKeyPath] = useState(existingConnection?.privateKeyPath ?? "");
@@ -68,6 +69,7 @@ export function EntityDialog(props: EntityDialogProps) {
           port: local ? 0 : Number(port),
           username: local ? "" : username,
           proxyId: proxyId || null,
+          jumpHostIds: kind === "ssh" ? jumpHostIds : [],
           terminalProfileId: terminalId || null,
           authentication,
           privateKeyPath: kind === "ssh" && authentication === "private_key" ? privateKeyPath : "",
@@ -119,6 +121,7 @@ export function EntityDialog(props: EntityDialogProps) {
                 <label><span>终端配置</span><select value={terminalId} onChange={(event) => setTerminalId(event.target.value)}><option value="">默认</option>{snapshot.terminalProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label>
               </div>
               {kind === "ssh" && <>
+                <label><span>SSH 跳板链（最多 4 跳）</span><select multiple size={Math.min(4, Math.max(2, snapshot.connections.length))} value={jumpHostIds} onChange={(event) => setJumpHostIds([...event.currentTarget.selectedOptions].map((option) => option.value).slice(0, 4))}>{snapshot.connections.filter((connection) => connection.kind === "ssh" && connection.id !== existingConnection?.id).map((connection) => <option key={connection.id} value={connection.id}>{connection.name} · {connection.host}</option>)}</select><small>按列表顺序逐跳；按 Ctrl 选择多个主机。</small></label>
                 <div className="form-row">
                   <label><span>认证</span><select value={authentication} onChange={(event) => setAuthentication(event.target.value as ConnectionInput["authentication"])}><option value="agent">SSH Agent</option><option value="password">密码</option><option value="private_key">私钥</option><option value="keyboard_interactive">Keyboard Interactive</option></select></label>
                   {authentication === "private_key" ? <label><span>私钥路径</span><input required maxLength={4096} value={privateKeyPath} onChange={(event) => setPrivateKeyPath(event.target.value)} /></label> : <span />}

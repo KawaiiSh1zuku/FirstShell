@@ -1,6 +1,6 @@
 //! Secure workspace use cases shared by the desktop adapter and tests.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -596,7 +596,7 @@ impl WorkspaceService {
     ) -> Result<ConnectionProfile, PublicError> {
         validate_connection_input(&input)?;
         let snapshot = self.snapshot().await?;
-        validate_connection_references(&input, &snapshot)?;
+        validate_connection_references(&input, &snapshot, None)?;
         let connection = ConnectionProfile {
             id: ConnectionId::new(),
             folder_id: input.folder_id,
@@ -608,6 +608,7 @@ impl WorkspaceService {
             port: input.port,
             username: input.username.trim().to_owned(),
             proxy_id: input.proxy_id,
+            jump_host_ids: input.jump_host_ids,
             terminal_profile_id: input.terminal_profile_id,
             authentication: input.authentication,
             private_key_path: input.private_key_path.trim().to_owned(),
@@ -644,7 +645,7 @@ impl WorkspaceService {
                 .map(|connection| connection.revision),
             expected_revision,
         )?;
-        validate_connection_references(&input, &snapshot)?;
+        validate_connection_references(&input, &snapshot, Some(id))?;
         let connection = ConnectionProfile {
             id,
             folder_id: input.folder_id,
@@ -656,6 +657,7 @@ impl WorkspaceService {
             port: input.port,
             username: input.username.trim().to_owned(),
             proxy_id: input.proxy_id,
+            jump_host_ids: input.jump_host_ids,
             terminal_profile_id: input.terminal_profile_id,
             authentication: input.authentication,
             private_key_path: input.private_key_path.trim().to_owned(),
@@ -722,6 +724,7 @@ impl WorkspaceService {
                 port: connection.port,
                 username: connection.username.clone(),
                 proxy_id: connection.proxy_id,
+                jump_host_ids: connection.jump_host_ids.clone(),
                 terminal_profile_id: connection.terminal_profile_id,
                 authentication: connection.authentication,
                 private_key_path: connection.private_key_path.clone(),
@@ -731,6 +734,7 @@ impl WorkspaceService {
                 notes: connection.notes.clone(),
             },
             &snapshot,
+            Some(id),
         )?;
         connection.revision = expected_revision
             .checked_add(1)
@@ -758,6 +762,7 @@ impl WorkspaceService {
             host: input.host.trim().to_owned(),
             port: input.port,
             username: input.username.trim().to_owned(),
+            dns_mode: input.dns_mode,
         };
         self.db
             .save(self.seal_proxy(&proxy)?, None)
@@ -795,6 +800,7 @@ impl WorkspaceService {
             host: input.host.trim().to_owned(),
             port: input.port,
             username: input.username.trim().to_owned(),
+            dns_mode: input.dns_mode,
         };
         self.db
             .save(self.seal_proxy(&proxy)?, Some(expected_revision))
@@ -1583,6 +1589,17 @@ fn validate_connection_input(input: &ConnectionInput) -> Result<(), PublicError>
             "OpenSSH fallback requires agent authentication to keep secrets out of the terminal",
         ));
     }
+    if input.openssh_fallback && (input.proxy_id.is_some() || !input.jump_host_ids.is_empty()) {
+        return Err(invalid(
+            "OpenSSH fallback cannot bypass a configured proxy or jump chain",
+        ));
+    }
+    if input.jump_host_ids.len() > 4 {
+        return Err(invalid("SSH jump chain exceeds the maximum depth of four"));
+    }
+    if input.kind != ConnectionKind::Ssh && !input.jump_host_ids.is_empty() {
+        return Err(invalid("only SSH connections can use jump hosts"));
+    }
     match input.kind {
         ConnectionKind::Ssh | ConnectionKind::Rdp
             if input.host.trim().is_empty() || input.port == 0 =>
@@ -1679,6 +1696,7 @@ fn validate_parent(
 fn validate_connection_references(
     input: &ConnectionInput,
     snapshot: &WorkspaceSnapshot,
+    current_id: Option<ConnectionId>,
 ) -> Result<(), PublicError> {
     if input
         .folder_id
@@ -1695,7 +1713,71 @@ fn validate_connection_references(
     {
         return Err(invalid("connection references a missing profile"));
     }
+    let mut jumps = HashSet::new();
+    for jump_id in &input.jump_host_ids {
+        if Some(*jump_id) == current_id || !jumps.insert(*jump_id) {
+            return Err(invalid("SSH jump chain contains a loop"));
+        }
+        let Some(jump) = snapshot
+            .connections
+            .iter()
+            .find(|value| value.id == *jump_id)
+        else {
+            return Err(invalid("SSH jump chain references a missing connection"));
+        };
+        if jump.kind != ConnectionKind::Ssh {
+            return Err(invalid("SSH jump chain contains a non-SSH connection"));
+        }
+    }
+    validate_jump_graph(input, snapshot, current_id)?;
     Ok(())
+}
+
+fn validate_jump_graph(
+    input: &ConnectionInput,
+    snapshot: &WorkspaceSnapshot,
+    current_id: Option<ConnectionId>,
+) -> Result<(), PublicError> {
+    let mut edges = snapshot
+        .connections
+        .iter()
+        .map(|connection| (connection.id, connection.jump_host_ids.clone()))
+        .collect::<HashMap<_, _>>();
+    if let Some(id) = current_id {
+        edges.insert(id, input.jump_host_ids.clone());
+    }
+    let mut indegree = edges
+        .keys()
+        .map(|id| (*id, 0_usize))
+        .collect::<HashMap<_, _>>();
+    for targets in edges.values() {
+        for target in targets {
+            if let Some(value) = indegree.get_mut(target) {
+                *value += 1;
+            }
+        }
+    }
+    let mut ready = indegree
+        .iter()
+        .filter_map(|(id, count)| (*count == 0).then_some(*id))
+        .collect::<VecDeque<_>>();
+    let mut visited = 0_usize;
+    while let Some(id) = ready.pop_front() {
+        visited += 1;
+        for target in edges.get(&id).into_iter().flatten() {
+            if let Some(count) = indegree.get_mut(target) {
+                *count -= 1;
+                if *count == 0 {
+                    ready.push_back(*target);
+                }
+            }
+        }
+    }
+    if visited == edges.len() {
+        Ok(())
+    } else {
+        Err(invalid("SSH jump chain contains a transitive loop"))
+    }
 }
 
 fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
@@ -1733,6 +1815,7 @@ fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
             port: connection.port,
             username: connection.username.clone(),
             proxy_id: connection.proxy_id,
+            jump_host_ids: connection.jump_host_ids.clone(),
             terminal_profile_id: connection.terminal_profile_id,
             authentication: connection.authentication,
             private_key_path: connection.private_key_path.clone(),
@@ -1742,7 +1825,7 @@ fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
             notes: connection.notes.clone(),
         };
         validate_connection_input(&input)?;
-        validate_connection_references(&input, snapshot)?;
+        validate_connection_references(&input, snapshot, Some(connection.id))?;
     }
     for proxy in &snapshot.proxies {
         validate_proxy_input(&ProxyInput {
@@ -1751,6 +1834,7 @@ fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
             host: proxy.host.clone(),
             port: proxy.port,
             username: proxy.username.clone(),
+            dns_mode: proxy.dns_mode,
         })?;
     }
     for terminal in &snapshot.terminal_profiles {
@@ -1964,6 +2048,7 @@ mod tests {
             port: 22,
             username: "operator".to_owned(),
             proxy_id: None,
+            jump_host_ids: Vec::new(),
             terminal_profile_id: None,
             authentication: SshAuthenticationKind::Agent,
             private_key_path: String::new(),
@@ -1978,6 +2063,64 @@ mod tests {
         assert!(validate_connection_input(&remote).is_err());
         remote.username = "operator".to_owned();
         assert!(validate_connection_input(&remote).is_ok());
+    }
+
+    #[test]
+    fn connection_validation_should_reject_transitive_jump_cycles() {
+        let first = ConnectionId::new();
+        let second = ConnectionId::new();
+        let third = ConnectionId::new();
+        let profile = |id, name: &str, jump_host_ids| ConnectionProfile {
+            id,
+            folder_id: None,
+            revision: 1,
+            sort_order: 0,
+            kind: ConnectionKind::Ssh,
+            name: name.to_owned(),
+            host: format!("{name}.internal"),
+            port: 22,
+            username: "operator".to_owned(),
+            proxy_id: None,
+            jump_host_ids,
+            terminal_profile_id: None,
+            authentication: SshAuthenticationKind::Agent,
+            private_key_path: String::new(),
+            allow_legacy_algorithms: false,
+            openssh_fallback: false,
+            tags: Vec::new(),
+            notes: String::new(),
+        };
+        let snapshot = WorkspaceSnapshot {
+            connections: vec![
+                profile(first, "first", vec![second]),
+                profile(second, "second", vec![third]),
+                profile(third, "third", Vec::new()),
+            ],
+            ..WorkspaceSnapshot::default()
+        };
+        let input = ConnectionInput {
+            folder_id: None,
+            sort_order: 0,
+            kind: ConnectionKind::Ssh,
+            name: "third".to_owned(),
+            host: "third.internal".to_owned(),
+            port: 22,
+            username: "operator".to_owned(),
+            proxy_id: None,
+            jump_host_ids: vec![first],
+            terminal_profile_id: None,
+            authentication: SshAuthenticationKind::Agent,
+            private_key_path: String::new(),
+            allow_legacy_algorithms: false,
+            openssh_fallback: false,
+            tags: Vec::new(),
+            notes: String::new(),
+        };
+
+        let error = validate_connection_references(&input, &snapshot, Some(third))
+            .expect_err("three-node jump cycle must be rejected");
+        assert_eq!(error.code, ErrorCode::InvalidInput);
+        assert!(error.message.contains("transitive loop"));
     }
 
     #[tokio::test]
@@ -2026,6 +2169,7 @@ mod tests {
                 port: 22,
                 username: "operator".to_owned(),
                 proxy_id: None,
+                jump_host_ids: Vec::new(),
                 terminal_profile_id: Some(terminal_id),
                 authentication: SshAuthenticationKind::Agent,
                 private_key_path: String::new(),

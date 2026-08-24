@@ -1541,10 +1541,14 @@ dependencies = [
  "firstshell-storage",
  "keyring",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
  "tinyfiledialogs",
  "tokio",
+ "tokio-util",
+ "uuid",
  "zeroize",
 ]
 
@@ -1613,14 +1617,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "encoding_rs",
  "firstshell-session",
  "rand",
  "russh",
  "russh-sftp",
+ "serde",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
+ "url",
+ "winreg 0.55.0",
  "zeroize",
 ]
 

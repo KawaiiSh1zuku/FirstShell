@@ -61,6 +61,8 @@ Vault Key 与 Sync Key 相互独立：本地记录由 Vault Key 保护；进入�
 
 M2 不改变 schema version 2。连接加密 payload 新增认证类型、私钥路径、按主机弱算法开关和 OpenSSH 回退开关；终端 payload 新增编码和键位配置。字段使用 serde 默认值兼容 M1 已保存 payload，因此不需要数据库迁移。快速连接只存在于当前前端会话，不写入 SQLite；原生取得的 SSH 秘密只进入 OS keyring 和短期可清零内存，不进入连接 payload。
 
+M3 仍不改变 schema version 2。连接加密 payload 增加有序 `jumpHostIds`，代理加密 payload 增加 `dnsMode`；两者使用 serde 默认值读取旧记录，并在 application 层验证引用、最多四跳和传递循环。代理密码仍只进入 OS keyring。SFTP workspace、隧道、传输任务和拖放批次都是当前进程的 Rust 运行时记录，不创建 `transfer_jobs` 或 `tunnel_profiles` 表；Vault 锁定会取消并清空这些记录，本地绝对路径、remote partial 名和进度不持久化。
+
 ## 查询与搜索
 
 密文不支持可靠的数据库全文检索。解锁后，应用按用户范围逐批解密名称、标签、片段和可选历史，建立内存搜索索引；锁定时销毁。索引设内存上限，对大历史采用按需分页，不把明文索引写回磁盘。
@@ -89,7 +91,7 @@ M2 不改变 schema version 2。连接加密 payload 新增认证类型、私钥
 | 会话日志 | 默认关闭；显式开启后写入应用数据目录，只记录远端输出并保留 7 天 |
 | 监控采样 | 内存环形缓冲，默认不持久化 |
 | 命令历史 | 可配置、加密、支持按连接或全局清除 |
-| 传输任务 | 完成后保留有限元数据，不保留文件内容 |
+| 传输任务 | M3 仅进程内保留；Vault 锁定清空，不保留本地路径或文件内容 |
 | tombstone | 在同步保留窗口和设备确认后压缩 |
 | 安全审计 | 只保留事件类型和脱敏上下文，按期限轮转 |
 

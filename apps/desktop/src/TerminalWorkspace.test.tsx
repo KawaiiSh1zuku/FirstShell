@@ -42,6 +42,7 @@ const connection: ConnectionProfile = {
   port: 22,
   username: "operator",
   proxyId: null,
+  jumpHostIds: [],
   terminalProfileId: "terminal-test",
   authentication: "agent",
   privateKeyPath: "",

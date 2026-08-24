@@ -89,6 +89,8 @@ Session -> Connector -> Direct | SOCKS5 | HTTP CONNECT | System Proxy | SSH Jump
 
 Connector 负责 DNS 策略、连接超时、取消、代理认证、跳板链循环检测和审计标签。跳板链必须设置最大深度，系统代理解析后的结果会固化到本次连接上下文，避免运行中配置漂移。
 
+M3 将 Connector 落在现有 `firstshell-ssh` crate 内：Direct、SOCKS5 和 HTTP CONNECT 共用一致的端点/超时边界，SOCKS5 支持本地或远端 DNS，HTTP CONNECT 与 SOCKS5 凭据只从 OS keyring 进入 Rust。Windows 系统代理读取当前静态配置，其他平台读取标准代理环境变量；每次连接只解析一次，不执行 PAC JavaScript。跳板链以首跳 Connector 加逐跳 `direct-tcpip` 组成，最多四跳，每跳独立认证和校验 host key。完整取舍见 [ADR-0006](./adr/0006-m3-operations-runtime.md)。
+
 SSH 默认使用纯 Rust `russh` 实现承载可控的终端、SFTP 和隧道能力。M2 的交互连接使用 20 秒 keepalive、连续 3 次失败阈值和 120 秒 inactivity timeout。平台 OpenSSH 只在用户明确启用且纯 Rust 路径返回连接类兼容错误时回退；认证失败、未知或变化的 host key 不得触发回退。桌面端回退目前只允许 agent 认证，并固定使用应用自有 known_hosts 和参数终止符，因此秘密不会进入 argv。
 
 ## 桌面 IPC 与状态所有权
@@ -98,6 +100,8 @@ Tauri command 用于低频请求/响应，例如连接配置 CRUD、解锁仓库
 Rust 是连接、传输、凭据和任务生命周期的唯一真相源。前端状态库只保存布局、选择、过滤器、临时表单和后端句柄，不复制远程会话状态机。
 
 M2 通过 Tauri `Channel` 将公开状态、脱敏错误、host key 证据和终端输出推送到 xterm.js。WebView 发起的连接请求只携带连接 ID 或无秘密的快速连接字段；密码、keyboard-interactive 响应和私钥口令由 Rust 原生对话框取得，并在 keyring/可清零容器中短期使用。前端异步 session 生命周期以 generation 标识，开发模式重复挂载产生的迟到会话会立即关闭。
+
+M3 的 `DesktopOperations` 独立持有 SFTP、传输、隧道和拖放暂存注册表。传输队列最多 256 项、全局同时执行 2 项；暂停按 `pausing -> paused -> queued/running` 收敛并保留安全 partial，取消使用独立的 `cancelling -> cancelled`，恢复/重试创建新 generation；公开快照携带非敏感 generation，使前端不会用迟到的旧回执覆盖新进度。Vault 锁定通过取消令牌清理全部运行资源。原生文件选择和系统拖放产生的绝对本地路径只存在于 Rust：WebView 仅收到一次性批次 ID、文件名、大小、远程相对路径和进度。拖放批次最多 8 个、每批 64 个常规文件、5 分钟过期并在消费后删除。
 
 Tauri capability 按窗口标签和命令最小授权；不暴露通用 shell、任意文件系统或任意 HTTP API。
 
@@ -116,11 +120,13 @@ Tauri capability 按窗口标签和命令最小授权；不暴露通用 shell、
 
 M2 中央工作区支持多标签和每标签最多四个独立分屏，分屏方向可按行或列切换；窄于 760 px 时列分屏自动改为纵向排列。每个 pane 独立管理 xterm、尺寸同步、host key 确认、重连与日志状态，终端模块动态加载以避免扩大主入口包。
 
+M3 将底部面板扩展为独立动态加载的 Operations 工作区，包含 rooted SFTP 面包屑、远程文件操作、传输队列和本地/远程/动态隧道。窄视口保持页面无横向溢出，SFTP 高密度工具栏在面板内部滚动；Operations 与终端分别形成独立 chunk，避免扩大初始入口或终端模块。
+
 应用外观提供浅色、深色和跟随系统三态切换，使用语义颜色 token 保持两套配色下的层级、焦点与错误状态一致。该非敏感偏好由前端本地保存并可在 Vault 锁定页切换；终端配色仍由 M2 的终端配置独立管理，不能把应用外观主题误作终端主题。
 
 ## 文件、监控与远程桌面
 
-SFTP 上传先写临时文件，再按目标能力执行原子重命名；覆盖、续传、符号链接和权限变化均需要明确策略。远程编辑保留原始版本指纹，保存时检测冲突。
+M3 SFTP 工作区先规范化服务器返回的 canonical root，此后所有路径都必须是根内相对路径；目录父链和目标使用 `lstat`/canonicalize 双重检查，符号链接只展示目标而不隐式跟随。上传写入同目录 `.firstshell-part`，下载写入本地同目录 partial；取消或暂停保留安全 partial，恢复从已确认长度继续，可选大小或 SHA-256 校验。`russh-sftp 2.4` 未封装 OpenSSH `posix-rename` 扩展，因此新文件使用同目录 rename，覆盖既有文件时需先删除旧文件再 rename，存在极短替换窗口；在线远程编辑仍在 M4 通过版本指纹处理冲突。
 
 主机监控首期采用 agentless 探针，优先读取 `/proc`、`/sys` 和稳定系统命令，输出版本化结构。探针必须有超时、输出上限和受控命令模板，禁止拼接未经验证的 shell 文本。
 
@@ -141,6 +147,8 @@ M0 已冻结[参考硬件](../benchmarks/reference-hardware.json)、[固定数�
 性能结论必须来自 Release 构建、固定数据集和可重复脚本，不能用开发模式的体感替代。
 
 M0 自动基线中，真实 Tauri channel 在 Rust 侧分发 10,000 个 1 KiB 交替终端/监控事件耗时 9.474 ms，且无事件丢失。完整环境、证据边界和后续待测项见 [M0 验收记录](./verification/m0.md)。
+
+M3 Release 基准在同一受控 SSH/SFTP 服务上使用 64 MiB 上传加下载：Windows OpenSSH `sftp.exe` 为 2050 ms，产品路径为 821 ms，吞吐比 2.496；10 个终端与 2 个并行 64 MiB 上传时无输入丢失，p95 和最大终端响应均为 789 us。重放命令和环境见 [M3 验收记录](./verification/m3.md)。
 
 ## 失败隔离与可观测性
 

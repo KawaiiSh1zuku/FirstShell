@@ -1,5 +1,5 @@
-import { Edit3, Plus, Save, Trash2, X } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { Edit3, KeyRound, Plus, Save, Trash2, X } from "lucide-react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
 import type {
   ProxyInput,
   ProxyProfile,
@@ -15,6 +15,8 @@ interface SettingsDialogProps {
   onClose(): void;
   onSaveProxy(input: ProxyInput, existing?: ProxyProfile): Promise<void>;
   onDeleteProxy(value: ProxyProfile): Promise<void>;
+  onConfigureProxyCredential(value: ProxyProfile): Promise<boolean>;
+  proxyCredentialStatus(value: ProxyProfile): Promise<boolean>;
   onSaveTerminal(input: TerminalProfileInput, existing?: TerminalProfile): Promise<void>;
   onDeleteTerminal(value: TerminalProfile): Promise<void>;
 }
@@ -23,6 +25,16 @@ export function SettingsDialog(props: SettingsDialogProps) {
   const [tab, setTab] = useState<"proxy" | "terminal">("proxy");
   const [editingProxy, setEditingProxy] = useState<ProxyProfile | null | undefined>(undefined);
   const [editingTerminal, setEditingTerminal] = useState<TerminalProfile | null | undefined>(undefined);
+  const [proxyCredentials, setProxyCredentials] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (tab !== "proxy" || editingProxy !== undefined) return;
+    let active = true;
+    void Promise.all(props.snapshot.proxies.map(async (proxy) => [proxy.id, await props.proxyCredentialStatus(proxy)] as const))
+      .then((entries) => { if (active) setProxyCredentials(Object.fromEntries(entries)); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [editingProxy, props.snapshot.proxies, props.proxyCredentialStatus, tab]);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}>
@@ -43,10 +55,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   title="代理配置"
                   items={props.snapshot.proxies}
                   label={(value) => value.name}
-                  detail={(value) => value.kind}
+                  detail={(value) => `${value.kind}${value.username ? proxyCredentials[value.id] ? " · 凭据已配置" : " · 未配置凭据" : ""}`}
                   onAdd={() => setEditingProxy(null)}
                   onEdit={(value) => setEditingProxy(value)}
                   onDelete={props.onDeleteProxy}
+                  extraAction={(value) => value.username && (value.kind === "socks5" || value.kind === "http_connect") ? <button className="icon-button" type="button" aria-label={`配置 ${value.name} 的代理凭据`} title="配置代理凭据" onClick={() => void props.onConfigureProxyCredential(value).then((configured) => { if (configured) setProxyCredentials((current) => ({ ...current, [value.id]: true })); }).catch(() => undefined)}><KeyRound size={15} /></button> : null}
                 />
               ) : (
                 <ProxyForm value={editingProxy ?? undefined} busy={props.busy} error={props.error} onCancel={() => setEditingProxy(undefined)} onSave={async (input) => { try { await props.onSaveProxy(input, editingProxy ?? undefined); setEditingProxy(undefined); } catch {} }} />
@@ -79,6 +92,7 @@ interface ProfileListProps<T> {
   onAdd(): void;
   onEdit(value: T): void;
   onDelete(value: T): Promise<void>;
+  extraAction?(value: T): ReactNode;
 }
 
 function ProfileList<T>(props: ProfileListProps<T>) {
@@ -88,7 +102,7 @@ function ProfileList<T>(props: ProfileListProps<T>) {
       {props.items.map((item, index) => (
         <div className="profile-row" key={index}>
           <div><strong>{props.label(item)}</strong><span>{props.detail(item)}</span></div>
-          <div className="row-actions"><button className="icon-button" type="button" aria-label={`编辑 ${props.label(item)}`} title="编辑" onClick={() => props.onEdit(item)}><Edit3 size={15} /></button><button className="icon-button danger" type="button" aria-label={`删除 ${props.label(item)}`} title="删除" onClick={() => void props.onDelete(item).catch(() => undefined)}><Trash2 size={15} /></button></div>
+          <div className="row-actions">{props.extraAction?.(item)}<button className="icon-button" type="button" aria-label={`编辑 ${props.label(item)}`} title="编辑" onClick={() => props.onEdit(item)}><Edit3 size={15} /></button><button className="icon-button danger" type="button" aria-label={`删除 ${props.label(item)}`} title="删除" onClick={() => void props.onDelete(item).catch(() => undefined)}><Trash2 size={15} /></button></div>
         </div>
       ))}
       {props.items.length === 0 && <div className="empty-list">暂无配置</div>}
@@ -102,15 +116,16 @@ function ProxyForm({ value, busy, error, onCancel, onSave }: { value?: ProxyProf
   const [host, setHost] = useState(value?.host ?? "");
   const [port, setPort] = useState(value?.port ?? 1080);
   const [username, setUsername] = useState(value?.username ?? "");
+  const [dnsMode, setDnsMode] = useState<ProxyInput["dnsMode"]>(value?.dnsMode ?? "remote");
   const endpoint = kind === "socks5" || kind === "http_connect";
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    return onSave({ kind, name, host: endpoint ? host : "", port: endpoint ? port : 0, username: endpoint ? username : "" });
+    return onSave({ kind, name, host: endpoint ? host : "", port: endpoint ? port : 0, username: endpoint ? username : "", dnsMode });
   };
   return (
     <form className="entity-form" onSubmit={submit}>
       <div className="form-row"><label><span>名称</span><input autoFocus required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} /></label><label><span>类型</span><select value={kind} onChange={(event) => setKind(event.target.value as ProxyInput["kind"])}><option value="direct">Direct</option><option value="socks5">SOCKS5</option><option value="http_connect">HTTP CONNECT</option><option value="system">系统代理</option></select></label></div>
-      {endpoint && <><div className="form-row endpoint-row"><label><span>主机</span><input required value={host} onChange={(event) => setHost(event.target.value)} /></label><label><span>端口</span><input type="number" min={1} max={65535} value={port} onChange={(event) => setPort(Number(event.target.value))} /></label></div><label><span>用户名</span><input value={username} onChange={(event) => setUsername(event.target.value)} /></label></>}
+      {endpoint && <><div className="form-row endpoint-row"><label><span>主机</span><input required value={host} onChange={(event) => setHost(event.target.value)} /></label><label><span>端口</span><input type="number" min={1} max={65535} value={port} onChange={(event) => setPort(Number(event.target.value))} /></label></div><div className="form-row"><label><span>用户名</span><input value={username} onChange={(event) => setUsername(event.target.value)} /></label><label><span>DNS 解析</span><select value={dnsMode} onChange={(event) => setDnsMode(event.target.value as ProxyInput["dnsMode"])}><option value="remote">代理端解析</option><option value="local">本地解析</option></select></label></div></>}
       {error && <div className="inline-error" role="alert">{error}</div>}
       <footer className="modal-actions"><button type="button" onClick={onCancel}>返回</button><button className="primary-command" type="submit" disabled={busy}><Save size={16} /><span>保存</span></button></footer>
     </form>

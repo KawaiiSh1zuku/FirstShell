@@ -20,7 +20,13 @@ serde.workspace = true
 tauri.workspace = true
 tinyfiledialogs = "3.9"
 tokio.workspace = true
+tokio-util.workspace = true
 zeroize.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true

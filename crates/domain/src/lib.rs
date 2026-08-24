@@ -116,6 +116,17 @@ pub enum ProxyKind {
     System,
 }
 
+/// Proxy-side target name resolution policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyDnsMode {
+    /// Send the target hostname to the proxy.
+    #[default]
+    Remote,
+    /// Resolve the target locally before proxy negotiation.
+    Local,
+}
+
 /// Connection-tree folder with decrypted display fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -172,6 +183,9 @@ pub struct ConnectionProfile {
     pub username: String,
     /// Optional proxy profile reference.
     pub proxy_id: Option<ProxyId>,
+    /// Ordered SSH jump hosts, with a maximum depth of four.
+    #[serde(default)]
+    pub jump_host_ids: Vec<ConnectionId>,
     /// Optional terminal profile reference.
     pub terminal_profile_id: Option<TerminalProfileId>,
     /// SSH authentication method without credential bytes.
@@ -212,6 +226,9 @@ pub struct ConnectionInput {
     pub username: String,
     /// Optional proxy profile reference.
     pub proxy_id: Option<ProxyId>,
+    /// Ordered SSH jump hosts, with a maximum depth of four.
+    #[serde(default)]
+    pub jump_host_ids: Vec<ConnectionId>,
     /// Optional terminal profile reference.
     pub terminal_profile_id: Option<TerminalProfileId>,
     /// SSH authentication method without credential bytes.
@@ -250,6 +267,9 @@ pub struct ProxyProfile {
     pub port: u16,
     /// Optional proxy username; its password remains in the OS keyring.
     pub username: String,
+    /// Whether the proxy or local client resolves target hostnames.
+    #[serde(default)]
+    pub dns_mode: ProxyDnsMode,
 }
 
 /// Input used to create or update a proxy profile.
@@ -266,6 +286,9 @@ pub struct ProxyInput {
     pub port: u16,
     /// Optional proxy username.
     pub username: String,
+    /// Whether the proxy or local client resolves target hostnames.
+    #[serde(default)]
+    pub dns_mode: ProxyDnsMode,
 }
 
 /// Decrypted terminal appearance and behavior profile.

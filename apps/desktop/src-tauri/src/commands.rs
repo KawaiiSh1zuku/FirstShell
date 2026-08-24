@@ -21,6 +21,8 @@ pub struct DesktopState {
     pub workspace: Arc<WorkspaceService>,
     /// Terminal session runtime and native credential boundary.
     pub sessions: Arc<crate::session_commands::DesktopSessions>,
+    /// Rooted SFTP, transfer, and tunnel runtimes.
+    pub operations: Arc<crate::transfer_commands::DesktopOperations>,
 }
 
 fn authorize_window_label(label: &str) -> Result<(), PublicError> {

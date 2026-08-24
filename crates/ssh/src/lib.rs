@@ -1,5 +1,18 @@
 //! Secure `russh` terminal transport with strict host-key verification.
 
+mod connector;
+mod sftp;
+mod tunnel;
+
+pub use connector::{
+    BoxedStream, ConnectTarget, Connector, ConnectorError, ProxyDnsMode, ProxyEndpoint, ProxyRoute,
+};
+pub use sftp::{
+    ConflictPolicy, RemoteEntry, RemoteEntryKind, SftpError, SftpWorkspace, TransferOptions,
+    TransferProgress, TransferReceipt, VerifyMode,
+};
+pub use tunnel::{RunningTunnel, TunnelError, TunnelKind, TunnelSnapshot, TunnelSpec};
+
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -18,11 +31,13 @@ use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, Disconnect};
 use thiserror::Error;
 use tokio::sync::mpsc;
+use tunnel::ForwardTargets;
 use zeroize::Zeroizing;
 
 const MAX_BANNER_BYTES: usize = 8 * 1024;
 const KEEPALIVE_SECONDS: u64 = 20;
 const INACTIVITY_SECONDS: u64 = 120;
+const MAX_JUMP_HOSTS: usize = 4;
 
 /// One capability exercised by the M0 `russh` spike.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +121,33 @@ pub enum SshAuthentication {
     KeyboardInteractive(Zeroizing<String>),
 }
 
+/// One independently authenticated and verified SSH jump host.
+pub struct JumpHostSpec {
+    /// DNS name or IP address.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
+    /// Remote account.
+    pub username: String,
+    /// Authentication selected for this hop.
+    pub authentication: SshAuthentication,
+    /// Enables the bounded per-host legacy algorithm exception.
+    pub allow_legacy_algorithms: bool,
+}
+
+impl std::fmt::Debug for JumpHostSpec {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("JumpHostSpec")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("authentication", &self.authentication)
+            .field("allow_legacy_algorithms", &self.allow_legacy_algorithms)
+            .finish()
+    }
+}
+
 impl std::fmt::Debug for SshAuthentication {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -138,6 +180,10 @@ pub struct SshConnectSpec {
     pub encoding: TerminalEncoding,
     /// Enables the bounded per-host legacy algorithm exception.
     pub allow_legacy_algorithms: bool,
+    /// Network route resolved before the SSH handshake.
+    pub route: ProxyRoute,
+    /// Ordered SSH jump hosts. The route applies only to the first network hop.
+    pub jump_hosts: Vec<JumpHostSpec>,
 }
 
 /// Public host-key evidence displayed before a trust decision.
@@ -159,8 +205,14 @@ pub struct HostKeyEvidence {
 
 #[derive(Debug, Clone)]
 enum HostKeyApproval {
-    TrustNew(String),
+    TrustNew {
+        host: String,
+        port: u16,
+        fingerprint: String,
+    },
     ReplaceChanged {
+        host: String,
+        port: u16,
         old_fingerprint: String,
         new_fingerprint: String,
     },
@@ -296,8 +348,11 @@ impl SshSessionFactory {
         *self
             .approval
             .lock()
-            .map_err(|_| SshError::StateUnavailable)? =
-            Some(HostKeyApproval::TrustNew(fingerprint.to_owned()));
+            .map_err(|_| SshError::StateUnavailable)? = Some(HostKeyApproval::TrustNew {
+            host: pending.host,
+            port: pending.port,
+            fingerprint: fingerprint.to_owned(),
+        });
         Ok(())
     }
 
@@ -321,6 +376,8 @@ impl SshSessionFactory {
             .approval
             .lock()
             .map_err(|_| SshError::StateUnavailable)? = Some(HostKeyApproval::ReplaceChanged {
+            host: pending.host,
+            port: pending.port,
             old_fingerprint: old_fingerprint.to_owned(),
             new_fingerprint: new_fingerprint.to_owned(),
         });
@@ -351,19 +408,11 @@ impl SessionFactory for SshSessionFactory {
 
 impl SshSessionFactory {
     async fn connect_inner(&self, size: TerminalSize) -> Result<ConnectedTransport, SshError> {
-        self.validate_endpoint()?;
-        if let Ok(mut pending) = self.pending.lock() {
-            *pending = None;
-        }
         let (event_tx, event_rx) = mpsc::channel(INTERACTIVE_QUEUE_CAPACITY);
-        let handler = self.client_handler(event_tx.clone());
-        let config = Arc::new(ssh_client_config(self.spec.allow_legacy_algorithms));
-        let mut client =
-            client::connect(config, (self.spec.host.as_str(), self.spec.port), handler)
-                .await
-                .map_err(|error| self.map_connect_error(error))?;
-
-        authenticate(&mut client, &self.spec.username, &self.spec.authentication).await?;
+        let AuthenticatedChain {
+            final_client: client,
+            jump_clients,
+        } = self.connect_authenticated(event_tx.clone()).await?;
         let channel = client
             .channel_open_session()
             .await
@@ -408,6 +457,13 @@ impl SshSessionFactory {
                                     "session closed",
                                     "en-US",
                                 ).await;
+                                for jump in jump_clients.iter().rev() {
+                                    let _ = jump.disconnect(
+                                        Disconnect::ByApplication,
+                                        "jump session closed",
+                                        "en-US",
+                                    ).await;
+                                }
                                 break;
                             }
                         };
@@ -450,37 +506,114 @@ impl SshSessionFactory {
         })
     }
 
-    fn validate_endpoint(&self) -> Result<(), SshError> {
-        if self.spec.host.is_empty()
-            || self.spec.host.len() > 253
-            || self.spec.host.starts_with('-')
-            || self
-                .spec
-                .host
-                .chars()
-                .any(|character| character.is_whitespace() || character.is_control())
-            || self.spec.username.is_empty()
-            || self.spec.username.len() > 256
-            || self
-                .spec
-                .username
-                .chars()
-                .any(|character| character.is_whitespace() || character.is_control())
-            || self.spec.port == 0
-        {
-            return Err(SshError::InvalidEndpoint);
-        }
-        Ok(())
+    async fn connect_authenticated(
+        &self,
+        event_tx: mpsc::Sender<SessionEvent>,
+    ) -> Result<AuthenticatedChain, SshError> {
+        self.connect_authenticated_with_forwards(event_tx, None)
+            .await
     }
 
-    fn client_handler(&self, events: mpsc::Sender<SessionEvent>) -> StrictClientHandler {
+    async fn connect_authenticated_with_forwards(
+        &self,
+        event_tx: mpsc::Sender<SessionEvent>,
+        forward_targets: Option<ForwardTargets>,
+    ) -> Result<AuthenticatedChain, SshError> {
+        self.validate_endpoints()?;
+        if let Ok(mut pending) = self.pending.lock() {
+            *pending = None;
+        }
+        let first = self
+            .spec
+            .jump_hosts
+            .first()
+            .map_or_else(|| EndpointRef::final_target(&self.spec), EndpointRef::jump);
+        let target = ConnectTarget::new(first.host.to_owned(), first.port)?;
+        let stream = Connector::new(self.spec.route.clone())
+            .connect(&target)
+            .await?;
+        let first_forward_targets = self
+            .spec
+            .jump_hosts
+            .is_empty()
+            .then(|| forward_targets.clone())
+            .flatten();
+        let mut client = self
+            .connect_endpoint(stream, first, event_tx.clone(), first_forward_targets)
+            .await?;
+        let mut jump_clients = Vec::with_capacity(self.spec.jump_hosts.len());
+        for endpoint in self.spec.jump_hosts.iter().skip(1).map(EndpointRef::jump) {
+            let channel = client
+                .channel_open_direct_tcpip(endpoint.host, u32::from(endpoint.port), "127.0.0.1", 0)
+                .await
+                .map_err(SshError::Russh)?;
+            let stream = BoxedStream::new(channel.into_stream());
+            jump_clients.push(Arc::new(client));
+            client = self
+                .connect_endpoint(stream, endpoint, event_tx.clone(), None)
+                .await?;
+        }
+        if !self.spec.jump_hosts.is_empty() {
+            let endpoint = EndpointRef::final_target(&self.spec);
+            let channel = client
+                .channel_open_direct_tcpip(endpoint.host, u32::from(endpoint.port), "127.0.0.1", 0)
+                .await
+                .map_err(SshError::Russh)?;
+            let stream = BoxedStream::new(channel.into_stream());
+            jump_clients.push(Arc::new(client));
+            client = self
+                .connect_endpoint(stream, endpoint, event_tx, forward_targets)
+                .await?;
+        }
+        Ok(AuthenticatedChain {
+            final_client: Arc::new(client),
+            jump_clients,
+        })
+    }
+
+    async fn connect_endpoint(
+        &self,
+        stream: BoxedStream,
+        endpoint: EndpointRef<'_>,
+        events: mpsc::Sender<SessionEvent>,
+        forward_targets: Option<ForwardTargets>,
+    ) -> Result<client::Handle<StrictClientHandler>, SshError> {
+        let handler = self.client_handler(endpoint.host, endpoint.port, events, forward_targets);
+        let config = Arc::new(ssh_client_config(endpoint.allow_legacy_algorithms));
+        let mut client = client::connect_stream(config, stream, handler)
+            .await
+            .map_err(|error| self.map_connect_error(error))?;
+        authenticate(&mut client, endpoint.username, endpoint.authentication).await?;
+        Ok(client)
+    }
+
+    fn validate_endpoints(&self) -> Result<(), SshError> {
+        if self.spec.jump_hosts.len() > MAX_JUMP_HOSTS {
+            return Err(SshError::InvalidEndpoint);
+        }
+        self.spec
+            .jump_hosts
+            .iter()
+            .map(EndpointRef::jump)
+            .chain(std::iter::once(EndpointRef::final_target(&self.spec)))
+            .try_for_each(validate_endpoint)
+    }
+
+    fn client_handler(
+        &self,
+        host: &str,
+        port: u16,
+        events: mpsc::Sender<SessionEvent>,
+        forward_targets: Option<ForwardTargets>,
+    ) -> StrictClientHandler {
         StrictClientHandler {
-            host: self.spec.host.clone(),
-            port: self.spec.port,
+            host: host.to_owned(),
+            port,
             known_hosts: self.spec.known_hosts.clone(),
             pending: Arc::clone(&self.pending),
             approval: Arc::clone(&self.approval),
             events,
+            forward_targets,
         }
     }
 
@@ -501,6 +634,78 @@ impl SshSessionFactory {
             SshError::Russh(error)
         }
     }
+}
+
+#[derive(Clone)]
+struct AuthenticatedChain {
+    final_client: Arc<client::Handle<StrictClientHandler>>,
+    jump_clients: Vec<Arc<client::Handle<StrictClientHandler>>>,
+}
+
+impl AuthenticatedChain {
+    async fn disconnect(&self, reason: &'static str) {
+        let _ = self
+            .final_client
+            .disconnect(Disconnect::ByApplication, reason, "en-US")
+            .await;
+        for jump in self.jump_clients.iter().rev() {
+            let _ = jump
+                .disconnect(Disconnect::ByApplication, reason, "en-US")
+                .await;
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EndpointRef<'a> {
+    host: &'a str,
+    port: u16,
+    username: &'a str,
+    authentication: &'a SshAuthentication,
+    allow_legacy_algorithms: bool,
+}
+
+impl<'a> EndpointRef<'a> {
+    fn jump(spec: &'a JumpHostSpec) -> Self {
+        Self {
+            host: &spec.host,
+            port: spec.port,
+            username: &spec.username,
+            authentication: &spec.authentication,
+            allow_legacy_algorithms: spec.allow_legacy_algorithms,
+        }
+    }
+
+    fn final_target(spec: &'a SshConnectSpec) -> Self {
+        Self {
+            host: &spec.host,
+            port: spec.port,
+            username: &spec.username,
+            authentication: &spec.authentication,
+            allow_legacy_algorithms: spec.allow_legacy_algorithms,
+        }
+    }
+}
+
+fn validate_endpoint(endpoint: EndpointRef<'_>) -> Result<(), SshError> {
+    if endpoint.host.is_empty()
+        || endpoint.host.len() > 253
+        || endpoint.host.starts_with('-')
+        || endpoint
+            .host
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+        || endpoint.username.is_empty()
+        || endpoint.username.len() > 256
+        || endpoint
+            .username
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+        || endpoint.port == 0
+    {
+        return Err(SshError::InvalidEndpoint);
+    }
+    Ok(())
 }
 
 fn ssh_client_config(allow_legacy_algorithms: bool) -> client::Config {
@@ -713,6 +918,7 @@ struct StrictClientHandler {
     pending: Arc<Mutex<Option<HostKeyEvidence>>>,
     approval: Arc<Mutex<Option<HostKeyApproval>>>,
     events: mpsc::Sender<SessionEvent>,
+    forward_targets: Option<ForwardTargets>,
 }
 
 impl client::Handler for StrictClientHandler {
@@ -745,7 +951,7 @@ impl client::Handler for StrictClientHandler {
                     .lock()
                     .ok()
                     .and_then(|mut approval| approval.take());
-                if matches!(approved, Some(HostKeyApproval::TrustNew(ref expected)) if expected == &fingerprint)
+                if matches!(approved, Some(HostKeyApproval::TrustNew { ref host, port, fingerprint: ref expected }) if host == &self.host && port == self.port && expected == &fingerprint)
                 {
                     russh::keys::known_hosts::learn_known_hosts_path(
                         &self.host,
@@ -766,9 +972,13 @@ impl client::Handler for StrictClientHandler {
                     .ok()
                     .and_then(|mut approval| approval.take());
                 if let Some(HostKeyApproval::ReplaceChanged {
+                    host,
+                    port,
                     old_fingerprint,
                     new_fingerprint,
                 }) = approved
+                    && host == self.host
+                    && port == self.port
                     && new_fingerprint == fingerprint
                     && replace_changed_key(
                         &self.known_hosts,
@@ -788,6 +998,32 @@ impl client::Handler for StrictClientHandler {
             }
             Err(_) => Ok(false),
         }
+    }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        _connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: client::ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        let target = self
+            .forward_targets
+            .as_ref()
+            .and_then(|targets| targets.read().ok())
+            .and_then(|targets| {
+                targets
+                    .get(&connected_port)
+                    .or_else(|| targets.get(&0))
+                    .cloned()
+            });
+        if let Some(target) = target {
+            tunnel::accept_remote_channel(channel, reply, target).await;
+        }
+        Ok(())
     }
 }
 
@@ -913,6 +1149,9 @@ pub enum SshError {
     /// `russh` protocol error.
     #[error("SSH transport failed")]
     Russh(#[source] russh::Error),
+    /// Direct or proxy stream creation failed.
+    #[error("SSH connector failed")]
+    Connector(#[from] ConnectorError),
     /// SSH key or agent error.
     #[error("SSH key operation failed")]
     Key(#[source] russh::keys::Error),
@@ -958,6 +1197,15 @@ impl SshError {
             | Self::HostKeyApprovalMismatch
             | Self::StateUnavailable
             | Self::Io(_) => SessionError::transport("HOST_KEY_STATE_FAILED", self.to_string()),
+            Self::Connector(ConnectorError::ProxyAuthentication) => {
+                SessionError::transport("PROXY_AUTHENTICATION_FAILED", self.to_string())
+            }
+            Self::Connector(ConnectorError::Timeout) => {
+                SessionError::transport("PROXY_TIMEOUT", self.to_string())
+            }
+            Self::Connector(_) => {
+                SessionError::transport("SSH_CONNECTION_FAILED", self.to_string())
+            }
             Self::Russh(_) => SessionError::transport("SSH_CONNECTION_FAILED", self.to_string()),
         }
     }

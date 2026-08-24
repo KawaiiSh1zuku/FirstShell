@@ -2,7 +2,7 @@
 
 FirstShell 是一个面向运维、开发和远程支持场景的开源桌面工作台。项目采用 Rust + Tauri，目标是覆盖 FinalShell 的核心工作流，但不会复制其代码、资源、私有协议或存储实现。
 
-当前仓库已完成 **M2 可日常使用的 SSH 终端**，下一阶段为 M3 SFTP、代理、跳板与隧道。本文档同时描述已实现边界和后续推荐方案，不能据此推断尚未验收的产品功能已经完成；实际进度以 [里程碑](./milestones.md) 为唯一真相源。
+当前仓库已完成 **M3 SFTP、代理、跳板与隧道**，下一阶段为 M4 主机监控与效率工具。本文档同时描述已实现边界和后续推荐方案，不能据此推断尚未验收的产品功能已经完成；实际进度以 [里程碑](./milestones.md) 为唯一真相源。
 
 ## 已确认决策
 
@@ -27,8 +27,10 @@ FirstShell 是一个面向运维、开发和远程支持场景的开源桌面工
 7. [M0 验收记录](./verification/m0.md)：技术 spike、性能基线和已知限制。
 8. [M1 验收记录](./verification/m1.md)：Vault、数据层、桌面 UI 自动化证据和实机延期项。
 9. [M2 验收记录](./verification/m2.md)：SSH、终端、会话运行时、安全与视觉证据。
-10. [M2 开发进度检查点](./2026-08-23_m2-development-progress.md)：2026-08-23 的历史检查点及其后续解决状态。
-11. [架构决策记录](./adr/0001-modular-monolith.md)：重要方案选择及其取舍。
+10. [M3 验收记录](./verification/m3.md)：SFTP、Connector、隧道、性能、安全与视觉证据。
+11. [M2 开发进度检查点](./2026-08-23_m2-development-progress.md)：2026-08-23 的历史检查点及其后续解决状态。
+12. [架构决策记录](./adr/0001-modular-monolith.md)：重要方案选择及其取舍。
+13. [M3 Operations ADR](./adr/0006-m3-operations-runtime.md)：Connector、SFTP、隧道、运行时任务和本地路径边界。
 
 
 ## 文档治理

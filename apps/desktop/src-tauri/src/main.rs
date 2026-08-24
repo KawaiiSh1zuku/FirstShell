@@ -4,6 +4,7 @@
 mod commands;
 mod ipc_benchmark;
 mod session_commands;
+mod transfer_commands;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +13,7 @@ use commands::DesktopState;
 use firstshell_application::{WorkspacePaths, WorkspaceService};
 use firstshell_domain::{ErrorCode, PublicError};
 use tauri::ipc::Channel;
-use tauri::{Emitter, Manager, WebviewWindow};
+use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent, WebviewWindow};
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
@@ -25,7 +26,7 @@ fn application_info(window: WebviewWindow) -> Result<ApplicationInfo, PublicErro
     }
     Ok(ApplicationInfo {
         name: "FirstShell",
-        milestone: "M1",
+        milestone: "M3",
     })
 }
 
@@ -51,37 +52,59 @@ async fn run_ipc_benchmark(
     ipc_benchmark::run(total_events, payload_bytes, &on_event)
 }
 
+fn handle_webview_event(webview: &tauri::Webview, event: &WebviewEvent) {
+    if webview.label() != "main" {
+        return;
+    }
+    let WebviewEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event else {
+        return;
+    };
+    let paths = paths.clone();
+    let app_handle = webview.app_handle().clone();
+    let operations = Arc::clone(&app_handle.state::<DesktopState>().operations);
+    tauri::async_runtime::spawn(async move {
+        let staged = transfer_commands::stage_sftp_drop(&operations, paths).await;
+        let _ = app_handle.emit_to("main", "sftp-upload-drop", staged);
+    });
+}
+
+fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let app_data = app.path().app_data_dir()?;
+    let workspace = tauri::async_runtime::block_on(WorkspaceService::open_default(
+        WorkspacePaths::under(&app_data),
+        Duration::from_secs(15 * 60),
+    ))?;
+    let workspace = Arc::new(workspace);
+    let sessions = Arc::new(session_commands::DesktopSessions::new(
+        app_data.join("known_hosts"),
+        app_data.join("session-logs"),
+    ));
+    let operations = Arc::new(transfer_commands::DesktopOperations::new());
+    app.manage(DesktopState {
+        workspace: Arc::clone(&workspace),
+        sessions: Arc::clone(&sessions),
+        operations: Arc::clone(&operations),
+    });
+
+    let app_handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            if matches!(workspace.enforce_idle_lock(), Ok(true)) {
+                sessions.close_all().await;
+                operations.close_all().await;
+                let _ = app_handle.emit_to("main", "vault-locked", ());
+            }
+        }
+    });
+    Ok(())
+}
+
 fn main() {
     let result = tauri::Builder::default()
-        .setup(|app| {
-            let app_data = app.path().app_data_dir()?;
-            let workspace = tauri::async_runtime::block_on(WorkspaceService::open_default(
-                WorkspacePaths::under(&app_data),
-                Duration::from_secs(15 * 60),
-            ))?;
-            let workspace = Arc::new(workspace);
-            let sessions = Arc::new(session_commands::DesktopSessions::new(
-                app_data.join("known_hosts"),
-                app_data.join("session-logs"),
-            ));
-            app.manage(DesktopState {
-                workspace: Arc::clone(&workspace),
-                sessions: Arc::clone(&sessions),
-            });
-
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(Duration::from_secs(30));
-                loop {
-                    interval.tick().await;
-                    if matches!(workspace.enforce_idle_lock(), Ok(true)) {
-                        sessions.close_all().await;
-                        let _ = app_handle.emit_to("main", "vault-locked", ());
-                    }
-                }
-            });
-            Ok(())
-        })
+        .on_webview_event(handle_webview_event)
+        .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
             application_info,
             run_ipc_benchmark,
@@ -113,6 +136,8 @@ fn main() {
             commands::restore_workspace_import,
             session_commands::configure_connection_credential,
             session_commands::connection_credential_status,
+            session_commands::configure_proxy_credential,
+            session_commands::proxy_credential_status,
             session_commands::open_terminal_session,
             session_commands::open_quick_terminal,
             session_commands::list_terminal_sessions,
@@ -124,6 +149,26 @@ fn main() {
             session_commands::approve_host_key,
             session_commands::start_session_log,
             session_commands::stop_session_log,
+            transfer_commands::open_sftp_workspace,
+            transfer_commands::approve_sftp_host_key,
+            transfer_commands::close_sftp_workspace,
+            transfer_commands::list_sftp_directory,
+            transfer_commands::create_sftp_directory,
+            transfer_commands::rename_sftp_entry,
+            transfer_commands::delete_sftp_entry,
+            transfer_commands::chmod_sftp_entry,
+            transfer_commands::choose_sftp_uploads,
+            transfer_commands::queue_sftp_drop,
+            transfer_commands::choose_sftp_download,
+            transfer_commands::list_transfers,
+            transfer_commands::pause_transfer,
+            transfer_commands::cancel_transfer,
+            transfer_commands::retry_transfer,
+            transfer_commands::clear_finished_transfers,
+            transfer_commands::start_tunnel,
+            transfer_commands::approve_tunnel_host_key,
+            transfer_commands::list_tunnels,
+            transfer_commands::close_tunnel,
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

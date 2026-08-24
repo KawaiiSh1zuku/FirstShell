@@ -1,5 +1,6 @@
 export type ConnectionKind = "ssh" | "rdp" | "local";
 export type ProxyKind = "direct" | "socks5" | "http_connect" | "system";
+export type ProxyDnsMode = "remote" | "local";
 export type SshAuthenticationKind = "agent" | "password" | "private_key" | "keyboard_interactive";
 export type TerminalEncoding = "utf8" | "gb18030" | "big5";
 export type TerminalKeymap = "xterm" | "windows" | "emacs";
@@ -39,6 +40,7 @@ export interface ConnectionProfile {
   port: number;
   username: string;
   proxyId: string | null;
+  jumpHostIds: string[];
   terminalProfileId: string | null;
   authentication: SshAuthenticationKind;
   privateKeyPath: string;
@@ -59,6 +61,7 @@ export interface ConnectionInput {
   port: number;
   username: string;
   proxyId: string | null;
+  jumpHostIds: string[];
   terminalProfileId: string | null;
   authentication: SshAuthenticationKind;
   privateKeyPath: string;
@@ -76,6 +79,7 @@ export interface ProxyProfile {
   host: string;
   port: number;
   username: string;
+  dnsMode: ProxyDnsMode;
 }
 
 export interface ProxyInput {
@@ -84,6 +88,7 @@ export interface ProxyInput {
   host: string;
   port: number;
   username: string;
+  dnsMode: ProxyDnsMode;
 }
 
 export interface TerminalProfile {
@@ -200,6 +205,84 @@ export interface QuickConnectInput {
   privateKeyPath: string;
   allowLegacyAlgorithms: boolean;
   opensshFallback: boolean;
+}
+
+export type RemoteEntryKind = "file" | "directory" | "symlink" | "other";
+
+export interface RemoteEntry {
+  path: string;
+  name: string;
+  kind: RemoteEntryKind;
+  size: number | null;
+  modifiedAt: number | null;
+  permissions: number | null;
+  linkTarget: string | null;
+}
+
+export interface SftpWorkspaceSnapshot {
+  id: string;
+  connectionId: string;
+  root: string;
+  state: "host_key_required" | "ready";
+  hostKey: HostKeyEvidence | null;
+}
+
+export type ConflictPolicy = "deny" | "replace" | "resume";
+export type VerifyMode = "size" | "sha256";
+
+export interface TransferOptions {
+  conflict: ConflictPolicy;
+  verify: VerifyMode;
+}
+
+export interface StagedUploadDrop {
+  batchId: string | null;
+  files: { name: string; size: number }[];
+  error: string | null;
+}
+
+export type TransferStatus = "queued" | "running" | "pausing" | "cancelling" | "paused" | "completed" | "failed" | "cancelled";
+
+export interface TransferSnapshot {
+  id: string;
+  workspaceId: string;
+  generation: number;
+  direction: "upload" | "download";
+  name: string;
+  remotePath: string;
+  status: TransferStatus;
+  transferred: number;
+  total: number;
+  resumed: boolean;
+  sha256: string | null;
+  error: string | null;
+}
+
+export type TunnelKind = "local" | "remote" | "dynamic";
+
+export interface TunnelSpec {
+  kind: TunnelKind;
+  bindHost: string;
+  bindPort: number;
+  targetHost: string;
+  targetPort: number;
+  allowNonLoopback: boolean;
+}
+
+export interface TunnelSnapshot {
+  kind: TunnelKind;
+  bindHost: string;
+  bindPort: number;
+  targetHost: string;
+  targetPort: number;
+}
+
+export interface DesktopTunnelSnapshot {
+  id: string;
+  connectionId: string;
+  state: "host_key_required" | "running";
+  tunnel: TunnelSnapshot | null;
+  hostKey: HostKeyEvidence | null;
 }
 
 export type Selection =

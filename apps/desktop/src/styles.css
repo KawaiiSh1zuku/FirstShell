@@ -417,6 +417,52 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .activity-list > div:not(.empty-list) { display: grid; grid-template-columns: 58px 1fr; min-height: 27px; align-items: center; padding: 0 11px; border-bottom: 1px solid #222522; font-size: 11px; }
 .activity-list time { color: var(--subtle); font-variant-numeric: tabular-nums; }
 
+.operations-panel { display: flex; flex: 0 0 var(--bottom-panel); min-height: 100px; flex-direction: column; background: #151715; }
+.operations-header { display: flex; align-items: center; justify-content: space-between; height: 32px; padding-right: 7px; border-bottom: 1px solid var(--border); }
+.operations-header nav { display: flex; align-self: stretch; }
+.operations-header nav button { min-width: 68px; padding: 0 12px; border: 0; border-right: 1px solid var(--border); background: transparent; color: var(--subtle); cursor: pointer; font-size: 10px; }
+.operations-header nav button[aria-current="true"] { background: var(--surface-3); color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+.operations-error { padding: 5px 10px; background: #492522; color: #ffb5ad; font-size: 10px; }
+.operations-content { min-height: 0; flex: 1; overflow: auto; }
+.operations-activity { height: 100%; }
+.sftp-connect { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; padding: 12px; }
+.sftp-connect select { min-width: 210px; }
+.sftp-browser { display: grid; grid-template-rows: 31px 32px minmax(0, 1fr); height: 100%; min-width: 620px; }
+.sftp-toolbar, .sftp-actions, .transfer-toolbar { display: flex; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 1px solid var(--border); }
+.sftp-toolbar { justify-content: space-between; }
+.sftp-toolbar > div, .sftp-actions { display: flex; align-items: center; gap: 4px; }
+.breadcrumbs { min-width: 0; overflow: hidden; }
+.breadcrumbs button { padding: 2px 3px; border: 0; background: transparent; color: #9fc9ab; cursor: pointer; font: 10px "Cascadia Mono", Consolas, monospace; }
+.sftp-toolbar button, .sftp-actions button, .transfer-toolbar button, .tunnel-row button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-2); color: var(--muted); cursor: pointer; font-size: 10px; }
+.sftp-actions select { width: auto; height: 24px; padding: 0 20px 0 6px; font-size: 10px; }
+.sftp-actions > * { flex-shrink: 0; }
+.sftp-actions .danger { color: #e89991; }
+.sftp-drop-hint { margin-left: auto; color: var(--subtle); font-size: 9px; white-space: nowrap; }
+.sftp-table { min-height: 0; overflow: auto; }
+.sftp-row { display: grid; grid-template-columns: minmax(220px, 1fr) 100px 64px; width: 100%; min-height: 26px; align-items: center; padding: 0 10px; border: 0; border-bottom: 1px solid #222522; background: transparent; color: var(--muted); text-align: left; font: 10px "Cascadia Mono", Consolas, monospace; }
+button.sftp-row { cursor: default; }
+button.sftp-row:hover, button.sftp-row.selected { background: #253028; color: var(--text); }
+.sftp-heading { position: sticky; z-index: 1; top: 0; background: var(--surface-2); color: var(--subtle); }
+.host-key-notice { display: flex; align-items: center; justify-content: center; gap: 14px; min-height: 100%; padding: 12px; color: #e3c26f; }
+.host-key-notice > div { display: grid; gap: 3px; }
+.host-key-notice span, .host-key-notice code { font-size: 10px; }
+.transfer-view, .tunnel-view { height: 100%; }
+.transfer-toolbar { justify-content: space-between; height: 31px; color: var(--subtle); font-size: 10px; }
+.transfer-list, .tunnel-list { min-height: 0; overflow: auto; }
+.transfer-row { display: grid; grid-template-columns: 24px minmax(180px, 1fr) 50px 28px; align-items: center; min-height: 48px; padding: 4px 9px; border-bottom: 1px solid #222522; }
+.transfer-row > div, .tunnel-row > div { display: grid; min-width: 0; }
+.transfer-row strong, .tunnel-row strong { overflow: hidden; color: var(--text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.transfer-row small, .tunnel-row small { overflow: hidden; color: var(--subtle); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.transfer-row progress { width: min(360px, 100%); height: 4px; margin-top: 4px; accent-color: var(--accent); }
+.transfer-direction { color: var(--accent); }
+.tunnel-view { display: grid; grid-template-columns: minmax(580px, 1fr) minmax(260px, 36%); }
+.tunnel-form { display: flex; align-content: start; align-items: center; flex-wrap: wrap; gap: 7px; padding: 10px; border-right: 1px solid var(--border); }
+.tunnel-form input, .tunnel-form select { width: 130px; height: 27px; font-size: 10px; }
+.tunnel-form input[type="number"] { width: 84px; }
+.tunnel-form .exposure-confirm { display: flex; align-items: center; gap: 5px; color: #d7b96f; font-size: 9px; }
+.tunnel-form .exposure-confirm input { width: 13px; }
+.tunnel-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; min-height: 45px; padding: 5px 8px; border-bottom: 1px solid #222522; }
+
 .inspector-content { min-height: 0; padding: 18px 16px; overflow: auto; }
 .inspector-icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid #3b5c47; border-radius: 5px; background: #1c3023; color: var(--accent); }
 .inspector-content h2 { margin: 12px 0 8px; overflow-wrap: anywhere; color: #e7ebe7; font-size: 15px; font-weight: 600; }
@@ -527,6 +573,9 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 [data-resolved-theme="light"] .terminal-idle { color: #7b857d; }
 [data-resolved-theme="light"] .terminal-idle small { color: #909991; }
 [data-resolved-theme="light"] .activity-panel { background: #f5f7f5; }
+[data-resolved-theme="light"] .operations-panel { background: #f5f7f5; }
+[data-resolved-theme="light"] .sftp-row, [data-resolved-theme="light"] .transfer-row, [data-resolved-theme="light"] .tunnel-row { border-bottom-color: #e1e6e2; }
+[data-resolved-theme="light"] button.sftp-row:hover, [data-resolved-theme="light"] button.sftp-row.selected { background: #dce9e0; }
 [data-resolved-theme="light"] .activity-list > div:not(.empty-list) { border-bottom-color: #e1e6e2; }
 [data-resolved-theme="light"] .inspector-icon { border-color: #a4c5b0; background: #e5f1e9; }
 [data-resolved-theme="light"] .kind-badge { border-color: #8bb69a; color: #28613f; }
@@ -563,4 +612,8 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   .settings-body { grid-template-columns: 105px minmax(0, 1fr); }
   .terminal-grid.columns { grid-auto-flow: row; grid-auto-columns: auto; grid-auto-rows: minmax(0, 1fr); }
   .terminal-endpoint span { display: none; }
+  .operations-header nav button { min-width: 56px; padding: 0 7px; }
+  .sftp-browser { min-width: 560px; }
+  .tunnel-view { grid-template-columns: 1fr; }
+  .tunnel-list { display: none; }
 }

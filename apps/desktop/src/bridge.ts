@@ -3,12 +3,14 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   ConnectionInput,
   ConnectionProfile,
+  DesktopTunnelSnapshot,
   ExportReceipt,
   Folder,
   FolderInput,
   ImportSummary,
   ProxyInput,
   ProxyProfile,
+  RemoteEntry,
   RestoreReceipt,
   DesktopSessionEvent,
   HostKeyEvidence,
@@ -19,6 +21,11 @@ import type {
   SessionLogReceipt,
   SessionSnapshot,
   TerminalSize,
+  TransferOptions,
+  TransferSnapshot,
+  TunnelSpec,
+  SftpWorkspaceSnapshot,
+  StagedUploadDrop,
   VaultStatus,
   WorkspaceLayout,
   WorkspaceSnapshot,
@@ -54,6 +61,8 @@ export interface WorkspaceBridge {
   onVaultLocked(callback: () => void): Promise<() => void>;
   configureCredential(connectionId: string): Promise<boolean>;
   credentialStatus(connectionId: string): Promise<boolean>;
+  configureProxyCredential(proxyId: string): Promise<boolean>;
+  proxyCredentialStatus(proxyId: string): Promise<boolean>;
   openTerminal(connectionId: string, size: TerminalSize, onEvent: (value: DesktopSessionEvent) => void): Promise<SessionSnapshot>;
   openQuickTerminal(input: QuickConnectInput, size: TerminalSize, onEvent: (value: DesktopSessionEvent) => void): Promise<SessionSnapshot>;
   listTerminals(): Promise<SessionSnapshot[]>;
@@ -65,6 +74,27 @@ export interface WorkspaceBridge {
   approveHostKey(sessionId: string, fingerprint: string, previousFingerprint: string | null): Promise<void>;
   startSessionLog(sessionId: string): Promise<SessionLogReceipt>;
   stopSessionLog(sessionId: string): Promise<void>;
+  openSftp(connectionId: string, root: string): Promise<SftpWorkspaceSnapshot>;
+  approveSftpHostKey(workspaceId: string, fingerprint: string, previousFingerprint: string | null): Promise<SftpWorkspaceSnapshot>;
+  closeSftp(workspaceId: string): Promise<void>;
+  listSftp(workspaceId: string, path: string): Promise<RemoteEntry[]>;
+  createSftpDirectory(workspaceId: string, parent: string, name: string): Promise<void>;
+  renameSftpEntry(workspaceId: string, path: string, name: string): Promise<string>;
+  deleteSftpEntry(workspaceId: string, path: string): Promise<void>;
+  chmodSftpEntry(workspaceId: string, path: string, mode: number): Promise<void>;
+  chooseSftpUploads(workspaceId: string, remoteDirectory: string, options: TransferOptions, onEvent: (value: TransferSnapshot) => void): Promise<TransferSnapshot[]>;
+  onSftpUploadDrop(callback: (value: StagedUploadDrop) => void): Promise<() => void>;
+  queueSftpDrop(workspaceId: string, batchId: string, remoteDirectory: string, options: TransferOptions, onEvent: (value: TransferSnapshot) => void): Promise<TransferSnapshot[]>;
+  chooseSftpDownload(workspaceId: string, remotePath: string, options: TransferOptions, onEvent: (value: TransferSnapshot) => void): Promise<TransferSnapshot | null>;
+  listTransfers(): Promise<TransferSnapshot[]>;
+  pauseTransfer(transferId: string): Promise<void>;
+  cancelTransfer(transferId: string): Promise<void>;
+  retryTransfer(transferId: string, onEvent: (value: TransferSnapshot) => void): Promise<TransferSnapshot>;
+  clearFinishedTransfers(): Promise<void>;
+  startTunnel(connectionId: string, spec: TunnelSpec): Promise<DesktopTunnelSnapshot>;
+  approveTunnelHostKey(tunnelId: string, fingerprint: string, previousFingerprint: string | null): Promise<DesktopTunnelSnapshot>;
+  listTunnels(): Promise<DesktopTunnelSnapshot[]>;
+  closeTunnel(tunnelId: string): Promise<void>;
 }
 
 const tauriBridge: WorkspaceBridge = {
@@ -106,6 +136,8 @@ const tauriBridge: WorkspaceBridge = {
   onVaultLocked: async (callback) => listen("vault-locked", callback),
   configureCredential: (connectionId) => invoke("configure_connection_credential", { connectionId }),
   credentialStatus: (connectionId) => invoke("connection_credential_status", { connectionId }),
+  configureProxyCredential: (proxyId) => invoke("configure_proxy_credential", { proxyId }),
+  proxyCredentialStatus: (proxyId) => invoke("proxy_credential_status", { proxyId }),
   openTerminal: (connectionId, size, onEvent) => {
     const channel = new Channel<DesktopSessionEvent>();
     channel.onmessage = onEvent;
@@ -126,6 +158,43 @@ const tauriBridge: WorkspaceBridge = {
     invoke("approve_host_key", { sessionId, fingerprint, previousFingerprint }),
   startSessionLog: (sessionId) => invoke("start_session_log", { sessionId }),
   stopSessionLog: (sessionId) => invoke("stop_session_log", { sessionId }),
+  openSftp: (connectionId, root) => invoke("open_sftp_workspace", { connectionId, root }),
+  approveSftpHostKey: (workspaceId, fingerprint, previousFingerprint) => invoke("approve_sftp_host_key", { workspaceId, fingerprint, previousFingerprint }),
+  closeSftp: (workspaceId) => invoke("close_sftp_workspace", { workspaceId }),
+  listSftp: (workspaceId, path) => invoke("list_sftp_directory", { workspaceId, path }),
+  createSftpDirectory: (workspaceId, parent, name) => invoke("create_sftp_directory", { workspaceId, parent, name }),
+  renameSftpEntry: (workspaceId, path, name) => invoke("rename_sftp_entry", { workspaceId, path, name }),
+  deleteSftpEntry: (workspaceId, path) => invoke("delete_sftp_entry", { workspaceId, path }),
+  chmodSftpEntry: (workspaceId, path, mode) => invoke("chmod_sftp_entry", { workspaceId, path, mode }),
+  chooseSftpUploads: (workspaceId, remoteDirectory, options, onEvent) => {
+    const channel = new Channel<TransferSnapshot>();
+    channel.onmessage = onEvent;
+    return invoke("choose_sftp_uploads", { workspaceId, remoteDirectory, options, onEvent: channel });
+  },
+  onSftpUploadDrop: async (callback) => listen<StagedUploadDrop>("sftp-upload-drop", (event) => callback(event.payload)),
+  queueSftpDrop: (workspaceId, batchId, remoteDirectory, options, onEvent) => {
+    const channel = new Channel<TransferSnapshot>();
+    channel.onmessage = onEvent;
+    return invoke("queue_sftp_drop", { workspaceId, batchId, remoteDirectory, options, onEvent: channel });
+  },
+  chooseSftpDownload: (workspaceId, remotePath, options, onEvent) => {
+    const channel = new Channel<TransferSnapshot>();
+    channel.onmessage = onEvent;
+    return invoke("choose_sftp_download", { workspaceId, remotePath, options, onEvent: channel });
+  },
+  listTransfers: () => invoke("list_transfers"),
+  pauseTransfer: (transferId) => invoke("pause_transfer", { transferId }),
+  cancelTransfer: (transferId) => invoke("cancel_transfer", { transferId }),
+  retryTransfer: (transferId, onEvent) => {
+    const channel = new Channel<TransferSnapshot>();
+    channel.onmessage = onEvent;
+    return invoke("retry_transfer", { transferId, onEvent: channel });
+  },
+  clearFinishedTransfers: () => invoke("clear_finished_transfers"),
+  startTunnel: (connectionId, spec) => invoke("start_tunnel", { connectionId, spec }),
+  approveTunnelHostKey: (tunnelId, fingerprint, previousFingerprint) => invoke("approve_tunnel_host_key", { tunnelId, fingerprint, previousFingerprint }),
+  listTunnels: () => invoke("list_tunnels"),
+  closeTunnel: (tunnelId) => invoke("close_tunnel", { tunnelId }),
 };
 
 const previewSnapshot: WorkspaceSnapshot = {
@@ -145,6 +214,7 @@ const previewSnapshot: WorkspaceSnapshot = {
       port: 22,
       username: "operator",
       proxyId: null,
+      jumpHostIds: [],
       terminalProfileId: "terminal-default",
       authentication: "agent",
       privateKeyPath: "",
@@ -164,6 +234,7 @@ const previewSnapshot: WorkspaceSnapshot = {
       port: 22,
       username: "dba",
       proxyId: null,
+      jumpHostIds: [],
       terminalProfileId: "terminal-default",
       authentication: "agent",
       privateKeyPath: "",
@@ -183,6 +254,7 @@ const previewSnapshot: WorkspaceSnapshot = {
       port: 3389,
       username: "Administrator",
       proxyId: null,
+      jumpHostIds: [],
       terminalProfileId: null,
       authentication: "agent",
       privateKeyPath: "",
@@ -220,6 +292,8 @@ export function createPreviewBridge(): WorkspaceBridge {
   };
   let sequence = 1;
   const sessions = new Map<string, SessionSnapshot>();
+  let transfers: TransferSnapshot[] = [];
+  let tunnels: DesktopTunnelSnapshot[] = [];
   const nextId = (prefix: string) => `${prefix}-preview-${sequence++}`;
   const updateSnapshot = <T>(operation: () => T) => Promise.resolve(operation());
 
@@ -345,6 +419,8 @@ export function createPreviewBridge(): WorkspaceBridge {
     onVaultLocked: async () => () => undefined,
     configureCredential: async () => true,
     credentialStatus: async () => true,
+    configureProxyCredential: async () => true,
+    proxyCredentialStatus: async () => true,
     openTerminal: async (_connectionId, size, onEvent) => {
       const value: SessionSnapshot = { id: nextId("session"), state: "ready", size };
       sessions.set(value.id, value);
@@ -375,6 +451,45 @@ export function createPreviewBridge(): WorkspaceBridge {
     approveHostKey: async () => undefined,
     startSessionLog: async (sessionId) => ({ path: `preview/session-logs/${sessionId}.log` }),
     stopSessionLog: async () => undefined,
+    openSftp: async (connectionId, root) => ({ id: nextId("sftp"), connectionId, root: root || "/home/preview", state: "ready", hostKey: null }),
+    approveSftpHostKey: async (workspaceId) => ({ id: workspaceId, connectionId: "connection-edge", root: "/home/preview", state: "ready", hostKey: null }),
+    closeSftp: async () => undefined,
+    listSftp: async (_workspaceId, path) => path ? [] : [
+      { path: "logs", name: "logs", kind: "directory", size: null, modifiedAt: null, permissions: 0o755, linkTarget: null },
+      { path: "README.txt", name: "README.txt", kind: "file", size: 1280, modifiedAt: null, permissions: 0o644, linkTarget: null },
+    ],
+    createSftpDirectory: async () => undefined,
+    renameSftpEntry: async (_workspaceId, _path, name) => name,
+    deleteSftpEntry: async () => undefined,
+    chmodSftpEntry: async () => undefined,
+    chooseSftpUploads: async () => [],
+    onSftpUploadDrop: async () => () => undefined,
+    queueSftpDrop: async () => [],
+    chooseSftpDownload: async () => null,
+    listTransfers: async () => transfers,
+    pauseTransfer: async (transferId) => { transfers = transfers.map((value) => value.id === transferId ? { ...value, status: "paused" } : value); },
+    cancelTransfer: async (transferId) => { transfers = transfers.map((value) => value.id === transferId ? { ...value, status: "cancelled" } : value); },
+    retryTransfer: async (transferId, onEvent) => {
+      const value = transfers.find((item) => item.id === transferId);
+      if (!value) throw new Error("transfer not found");
+      const retried = { ...value, generation: value.generation + 1, status: "queued" as const, transferred: 0, error: null };
+      transfers = transfers.map((item) => item.id === transferId ? retried : item);
+      queueMicrotask(() => onEvent(retried));
+      return retried;
+    },
+    clearFinishedTransfers: async () => { transfers = transfers.filter((value) => !["completed", "failed", "cancelled"].includes(value.status)); },
+    startTunnel: async (connectionId, spec) => {
+      const value: DesktopTunnelSnapshot = { id: nextId("tunnel"), connectionId, state: "running", tunnel: { ...spec, bindPort: spec.bindPort || 49152 }, hostKey: null };
+      tunnels = [...tunnels, value];
+      return value;
+    },
+    approveTunnelHostKey: async (tunnelId) => {
+      const value = tunnels.find((item) => item.id === tunnelId);
+      if (!value) throw new Error("tunnel not found");
+      return value;
+    },
+    listTunnels: async () => tunnels,
+    closeTunnel: async (tunnelId) => { tunnels = tunnels.filter((value) => value.id !== tunnelId); },
   };
 }
 
