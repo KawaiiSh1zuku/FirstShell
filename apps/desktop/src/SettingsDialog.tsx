@@ -123,15 +123,18 @@ function TerminalForm({ value, busy, error, onCancel, onSave }: { value?: Termin
   const [fontSize, setFontSize] = useState(value?.fontSize ?? 14);
   const [theme, setTheme] = useState(value?.theme ?? "firstshell-dark");
   const [scrollback, setScrollback] = useState(value?.scrollback ?? 10000);
+  const [encoding, setEncoding] = useState<TerminalProfileInput["encoding"]>(value?.encoding ?? "utf8");
+  const [keymap, setKeymap] = useState<TerminalProfileInput["keymap"]>(value?.keymap ?? "xterm");
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    return onSave({ name, fontFamily, fontSize, theme, scrollback });
+    return onSave({ name, fontFamily, fontSize, theme, scrollback, encoding, keymap });
   };
   return (
     <form className="entity-form" onSubmit={submit}>
       <label><span>名称</span><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} /></label>
       <div className="form-row endpoint-row"><label><span>字体</span><input required value={fontFamily} onChange={(event) => setFontFamily(event.target.value)} /></label><label><span>字号</span><input type="number" min={8} max={32} step={0.5} value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} /></label></div>
       <div className="form-row"><label><span>主题</span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="firstshell-dark">FirstShell Dark</option><option value="firstshell-light">FirstShell Light</option><option value="high-contrast">High Contrast</option></select></label><label><span>滚屏行数</span><input type="number" min={100} max={200000} step={100} value={scrollback} onChange={(event) => setScrollback(Number(event.target.value))} /></label></div>
+      <div className="form-row"><label><span>编码</span><select value={encoding} onChange={(event) => setEncoding(event.target.value as TerminalProfileInput["encoding"])}><option value="utf8">UTF-8</option><option value="gb18030">GB18030</option><option value="big5">Big5</option></select></label><label><span>键位</span><select value={keymap} onChange={(event) => setKeymap(event.target.value as TerminalProfileInput["keymap"])}><option value="xterm">xterm</option><option value="windows">Windows</option><option value="emacs">Emacs</option></select></label></div>
       {error && <div className="inline-error" role="alert">{error}</div>}
       <footer className="modal-actions"><button type="button" onClick={onCancel}>返回</button><button className="primary-command" type="submit" disabled={busy}><Save size={16} /><span>保存</span></button></footer>
     </form>

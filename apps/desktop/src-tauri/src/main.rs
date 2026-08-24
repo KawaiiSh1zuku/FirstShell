@@ -3,6 +3,7 @@
 
 mod commands;
 mod ipc_benchmark;
+mod session_commands;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,12 +56,17 @@ fn main() {
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
             let workspace = tauri::async_runtime::block_on(WorkspaceService::open_default(
-                WorkspacePaths::under(app_data),
+                WorkspacePaths::under(&app_data),
                 Duration::from_secs(15 * 60),
             ))?;
             let workspace = Arc::new(workspace);
+            let sessions = Arc::new(session_commands::DesktopSessions::new(
+                app_data.join("known_hosts"),
+                app_data.join("session-logs"),
+            ));
             app.manage(DesktopState {
                 workspace: Arc::clone(&workspace),
+                sessions: Arc::clone(&sessions),
             });
 
             let app_handle = app.handle().clone();
@@ -69,6 +75,7 @@ fn main() {
                 loop {
                     interval.tick().await;
                     if matches!(workspace.enforce_idle_lock(), Ok(true)) {
+                        sessions.close_all().await;
                         let _ = app_handle.emit_to("main", "vault-locked", ());
                     }
                 }
@@ -104,6 +111,19 @@ fn main() {
             commands::export_workspace,
             commands::validate_workspace_import,
             commands::restore_workspace_import,
+            session_commands::configure_connection_credential,
+            session_commands::connection_credential_status,
+            session_commands::open_terminal_session,
+            session_commands::open_quick_terminal,
+            session_commands::list_terminal_sessions,
+            session_commands::send_terminal_input,
+            session_commands::resize_terminal,
+            session_commands::reconnect_terminal,
+            session_commands::close_terminal,
+            session_commands::pending_host_key,
+            session_commands::approve_host_key,
+            session_commands::start_session_log,
+            session_commands::stop_session_log,
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

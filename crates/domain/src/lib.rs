@@ -61,6 +61,47 @@ pub enum ConnectionKind {
     Local,
 }
 
+/// Non-secret SSH authentication selection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SshAuthenticationKind {
+    /// Use the platform SSH agent without forwarding it.
+    #[default]
+    Agent,
+    /// Load a password from the native credential broker.
+    Password,
+    /// Load a local private key and obtain its passphrase from a native prompt.
+    PrivateKey,
+    /// Use a native secret response for keyboard-interactive authentication.
+    KeyboardInteractive,
+}
+
+/// Supported terminal wire encodings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalEncoding {
+    /// Modern UTF-8 terminals.
+    #[default]
+    Utf8,
+    /// GB18030-compatible Chinese terminals.
+    Gb18030,
+    /// Traditional Chinese Big5 terminals.
+    Big5,
+}
+
+/// Terminal keyboard compatibility profiles.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalKeymap {
+    /// xterm-compatible defaults.
+    #[default]
+    Xterm,
+    /// Windows-oriented word deletion and clipboard bindings.
+    Windows,
+    /// Emacs-style meta and control bindings.
+    Emacs,
+}
+
 /// Supported proxy transports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,6 +174,18 @@ pub struct ConnectionProfile {
     pub proxy_id: Option<ProxyId>,
     /// Optional terminal profile reference.
     pub terminal_profile_id: Option<TerminalProfileId>,
+    /// SSH authentication method without credential bytes.
+    #[serde(default)]
+    pub authentication: SshAuthenticationKind,
+    /// Optional local private-key path; key contents never cross IPC.
+    #[serde(default)]
+    pub private_key_path: String,
+    /// Per-host opt-in for the bounded legacy algorithm set.
+    #[serde(default)]
+    pub allow_legacy_algorithms: bool,
+    /// Whether explicit compatibility fallback to platform OpenSSH is allowed.
+    #[serde(default)]
+    pub openssh_fallback: bool,
     /// Searchable private tags.
     pub tags: Vec<String>,
     /// Optional private notes.
@@ -161,6 +214,18 @@ pub struct ConnectionInput {
     pub proxy_id: Option<ProxyId>,
     /// Optional terminal profile reference.
     pub terminal_profile_id: Option<TerminalProfileId>,
+    /// SSH authentication method without credential bytes.
+    #[serde(default)]
+    pub authentication: SshAuthenticationKind,
+    /// Optional local private-key path.
+    #[serde(default)]
+    pub private_key_path: String,
+    /// Per-host opt-in for the bounded legacy algorithm set.
+    #[serde(default)]
+    pub allow_legacy_algorithms: bool,
+    /// Whether explicit compatibility fallback to platform OpenSSH is allowed.
+    #[serde(default)]
+    pub openssh_fallback: bool,
     /// Searchable private tags.
     pub tags: Vec<String>,
     /// Optional private notes.
@@ -221,6 +286,12 @@ pub struct TerminalProfile {
     pub theme: String,
     /// Maximum in-memory scrollback lines.
     pub scrollback: u32,
+    /// Remote byte encoding.
+    #[serde(default)]
+    pub encoding: TerminalEncoding,
+    /// Keyboard compatibility profile.
+    #[serde(default)]
+    pub keymap: TerminalKeymap,
 }
 
 /// Input used to create or update a terminal profile.
@@ -237,6 +308,12 @@ pub struct TerminalProfileInput {
     pub theme: String,
     /// Maximum in-memory scrollback lines.
     pub scrollback: u32,
+    /// Remote byte encoding.
+    #[serde(default)]
+    pub encoding: TerminalEncoding,
+    /// Keyboard compatibility profile.
+    #[serde(default)]
+    pub keymap: TerminalKeymap,
 }
 
 /// Decrypted entities sent to the workspace after unlock.
@@ -365,5 +442,41 @@ mod tests {
     fn public_error_should_assign_a_non_nil_correlation_id() {
         let error = PublicError::new(ErrorCode::InvalidInput, "invalid port");
         assert_ne!(error.correlation_id, Uuid::nil());
+    }
+
+    #[test]
+    fn m1_payloads_should_decode_with_m2_security_defaults() {
+        let connection: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(),
+            "folderId": null,
+            "revision": 1,
+            "sortOrder": 0,
+            "kind": "ssh",
+            "name": "Legacy",
+            "host": "legacy.test",
+            "port": 22,
+            "username": "operator",
+            "proxyId": null,
+            "terminalProfileId": null,
+            "tags": [],
+            "notes": ""
+        }))
+        .expect("M1 connection payload should remain readable");
+        assert_eq!(connection.authentication, SshAuthenticationKind::Agent);
+        assert!(!connection.allow_legacy_algorithms);
+        assert!(!connection.openssh_fallback);
+
+        let terminal: TerminalProfile = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(),
+            "revision": 1,
+            "name": "Legacy",
+            "fontFamily": "Consolas",
+            "fontSize": 14.0,
+            "theme": "firstshell-dark",
+            "scrollback": 10000
+        }))
+        .expect("M1 terminal payload should remain readable");
+        assert_eq!(terminal.encoding, TerminalEncoding::Utf8);
+        assert_eq!(terminal.keymap, TerminalKeymap::Xterm);
     }
 }

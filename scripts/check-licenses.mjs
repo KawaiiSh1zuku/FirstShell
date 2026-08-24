@@ -22,6 +22,7 @@ const allowedIdentifiers = new Set([
   "Unicode-3.0",
   "Unlicense",
   "Zlib",
+  "zlib-acknowledgement",
 ]);
 const operators = new Set(["AND", "OR", "WITH"]);
 

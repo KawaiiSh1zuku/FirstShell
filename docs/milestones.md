@@ -17,7 +17,7 @@
 | --- | --- | --- | --- |
 | M0 | 架构冻结与关键技术验证 | 无 | Complete |
 | M1 | 桌面骨架、数据层与安全仓库 | M0 | Complete |
-| M2 | 可日常使用的 SSH 终端 | M1 | Not started |
+| M2 | 可日常使用的 SSH 终端 | M1 | Complete |
 | M3 | SFTP、代理、跳板与隧道 | M2 | Not started |
 | M4 | 主机监控与效率工具 | M3 | Not started |
 | M5 | 端到端加密同步 | M1；全量集成依赖 M4 | Not started |
@@ -81,14 +81,16 @@ M5 的协议和服务端可以在 M2-M4 期间并行开发，但只有覆盖最�
 
 主要交付：
 
-- 密码、公钥、keyboard-interactive 和可用平台的 SSH agent 认证。
-- known_hosts、TOFU、密钥变化阻断和按主机弱算法例外。
-- xterm.js 终端、多标签、多分屏、窗口尺寸同步、保活和显式重连。
-- 会话 actor、交互通道、取消、超时、资源上限和错误诊断。
-- 本地终端、终端主题/字体/键位/编码，以及显式会话日志。
-- 纯 Rust SSH 主路径和经验证的 OpenSSH 兼容回退。
+- [x] 密码、公钥、keyboard-interactive 和可用平台的 SSH agent 认证。
+- [x] known_hosts、TOFU、密钥变化阻断和按主机弱算法例外。
+- [x] xterm.js 终端、多标签、多分屏、窗口尺寸同步、保活和显式重连。
+- [x] 会话 actor、交互通道、取消、超时、资源上限和错误诊断。
+- [x] 本地终端、终端主题/字体/键位/编码，以及显式会话日志。
+- [x] 纯 Rust SSH 主路径和受限、可诊断的 OpenSSH 兼容回退。
 
 退出门槛：10 个并发活跃终端压力测试无输入丢失；恶意 banner、连接中断、host key 变化和认证失败测试通过；秘密未进入 WebView、argv 或日志。
+
+验收证据：[M2 验收记录](./verification/m2.md)。agent 认证在平台 agent 可用时启用；本次完成实现、编译门禁与失败边界审查，不伪造本机未运行的 agent 服务，实机成功认证边界在验收记录中单列。
 
 ## M3 SFTP、代理、跳板与隧道
 

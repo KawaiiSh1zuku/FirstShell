@@ -14,7 +14,7 @@
 | Deferred | 明确延后，不阻塞当前发布目标 |
 | Excluded | 不属于项目范围或存在不可接受风险 |
 
-M1 基础工作区能力已通过自动化验收；M2 及后续产品能力仍为 `Planned`。安装后人工交互与视觉基线按项目决定在 M4 结束后统一执行，详见 [M1 验收记录](./verification/m1.md)。
+M1 基础工作区与 M2 SSH 终端能力已通过验收；M3 及后续产品能力仍为 `Planned`。M1 安装后人工交互仍按项目决定在 M4 结束后统一执行；M2 已完成浏览器自动化与双视口视觉基线，详见 [M1 验收记录](./verification/m1.md) 和 [M2 验收记录](./verification/m2.md)。
 
 ## 基础工作区
 
@@ -25,20 +25,20 @@ M1 基础工作区能力已通过自动化验收；M2 及后续产品能力仍�
 | 本地加密仓库 | M1 | Verified | OS keyring、自动锁定、损坏恢复 |
 | 多工作区布局持久化 | M1 | Verified | 面板与标签恢复不泄露锁定数据 |
 | 加密导入、导出与备份 | M1 | Verified | 独立导出口令、完整性验证、事务恢复 |
-| 快速连接 | M2 | Planned | 临时连接不被意外持久化 |
+| 快速连接 | M2 | Verified | 临时连接不被意外持久化 |
 
 ## SSH 与终端
 
 | 能力 | 目标 | 状态 | 验收重点 |
 | --- | --- | --- | --- |
-| 密码、公钥、keyboard-interactive | M2 | Planned | 秘密不进入 WebView、argv 或日志 |
-| SSH agent | M2 | Planned | 平台能力探测、转发默认关闭 |
-| known_hosts 与首次信任 | M2 | Planned | 密钥变化 fail-closed |
-| 多标签与多分屏终端 | M2 | Planned | 布局稳定、键盘焦点正确、会话独立 |
-| 保活、断线检测与显式重连 | M2 | Planned | 重连不自动重放敏感输入 |
-| 终端主题、字体、编码与键位 | M2 | Planned | 字体回退和 CJK 输入可验证 |
-| 本地终端 | M2 | Planned | 平台 shell 白名单和受控环境继承 |
-| 会话日志 | M2 | Planned | 默认关闭、明确路径和保留策略 |
+| 密码、公钥、keyboard-interactive | M2 | Verified | 秘密不进入 WebView、argv 或日志 |
+| SSH agent | M2 | Verified | 平台能力探测、转发默认关闭 |
+| known_hosts 与首次信任 | M2 | Verified | 密钥变化 fail-closed |
+| 多标签与多分屏终端 | M2 | Verified | 布局稳定、键盘焦点正确、会话独立 |
+| 保活、断线检测与显式重连 | M2 | Verified | 重连不自动重放敏感输入 |
+| 终端主题、字体、编码与键位 | M2 | Verified | 字体回退和 CJK 输入可验证 |
+| 本地终端 | M2 | Verified | 平台 shell 白名单和受控环境继承 |
+| 会话日志 | M2 | Verified | 默认关闭、应用目录和 7 天保留策略 |
 | 命令历史与补全 | M4 | Planned | 加密、可清除、补全不自动执行 |
 | 命令广播 | M4 | Planned | 目标会话可见、逐次确认、紧急停止 |
 

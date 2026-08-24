@@ -15,9 +15,12 @@ firstshell-security = { path = "../../../crates/security" }
 firstshell-session = { path = "../../../crates/session" }
 firstshell-ssh = { path = "../../../crates/ssh" }
 firstshell-storage = { path = "../../../crates/storage" }
+keyring.workspace = true
 serde.workspace = true
 tauri.workspace = true
+tinyfiledialogs = "3.9"
 tokio.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

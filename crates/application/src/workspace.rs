@@ -8,8 +8,8 @@ use std::time::Duration;
 use firstshell_domain::{
     ConnectionId, ConnectionInput, ConnectionKind, ConnectionProfile, ErrorCode, Folder, FolderId,
     FolderInput, ProxyId, ProxyInput, ProxyKind, ProxyProfile, PublicError, SearchResult,
-    SearchResultKind, TerminalProfile, TerminalProfileId, TerminalProfileInput, WorkspaceLayout,
-    WorkspaceSnapshot,
+    SearchResultKind, SshAuthenticationKind, TerminalEncoding, TerminalKeymap, TerminalProfile,
+    TerminalProfileId, TerminalProfileInput, WorkspaceLayout, WorkspaceSnapshot,
 };
 use firstshell_security::{
     ExportEnvelope, OsKeyring, RecordContext, RecoveryKeySlot, SealedPayload, SecurityError,
@@ -609,6 +609,10 @@ impl WorkspaceService {
             username: input.username.trim().to_owned(),
             proxy_id: input.proxy_id,
             terminal_profile_id: input.terminal_profile_id,
+            authentication: input.authentication,
+            private_key_path: input.private_key_path.trim().to_owned(),
+            allow_legacy_algorithms: input.allow_legacy_algorithms,
+            openssh_fallback: input.openssh_fallback,
             tags: normalized_tags(input.tags),
             notes: input.notes,
         };
@@ -653,6 +657,10 @@ impl WorkspaceService {
             username: input.username.trim().to_owned(),
             proxy_id: input.proxy_id,
             terminal_profile_id: input.terminal_profile_id,
+            authentication: input.authentication,
+            private_key_path: input.private_key_path.trim().to_owned(),
+            allow_legacy_algorithms: input.allow_legacy_algorithms,
+            openssh_fallback: input.openssh_fallback,
             tags: normalized_tags(input.tags),
             notes: input.notes,
         };
@@ -715,6 +723,10 @@ impl WorkspaceService {
                 username: connection.username.clone(),
                 proxy_id: connection.proxy_id,
                 terminal_profile_id: connection.terminal_profile_id,
+                authentication: connection.authentication,
+                private_key_path: connection.private_key_path.clone(),
+                allow_legacy_algorithms: connection.allow_legacy_algorithms,
+                openssh_fallback: connection.openssh_fallback,
                 tags: connection.tags.clone(),
                 notes: connection.notes.clone(),
             },
@@ -837,6 +849,8 @@ impl WorkspaceService {
             font_size: input.font_size,
             theme: input.theme.trim().to_owned(),
             scrollback: input.scrollback,
+            encoding: input.encoding,
+            keymap: input.keymap,
         };
         self.db
             .save(self.seal_terminal(&profile)?, None)
@@ -874,6 +888,8 @@ impl WorkspaceService {
             font_size: input.font_size,
             theme: input.theme.trim().to_owned(),
             scrollback: input.scrollback,
+            encoding: input.encoding,
+            keymap: input.keymap,
         };
         self.db
             .save(self.seal_terminal(&profile)?, Some(expected_revision))
@@ -1123,6 +1139,8 @@ impl WorkspaceService {
             font_size: 14.0,
             theme: "firstshell-dark".to_owned(),
             scrollback: 10_000,
+            encoding: TerminalEncoding::Utf8,
+            keymap: TerminalKeymap::Xterm,
         })
         .await?;
         Ok(())
@@ -1527,7 +1545,25 @@ fn validate_connection_input(input: &ConnectionInput) -> Result<(), PublicError>
     validate_text("connection name", &input.name, 1, 128)?;
     validate_text("host", &input.host, 0, 253)?;
     validate_text("username", &input.username, 0, 128)?;
+    validate_text("private key path", &input.private_key_path, 0, 4096)?;
     validate_text("notes", &input.notes, 0, 4096)?;
+    if matches!(input.kind, ConnectionKind::Ssh | ConnectionKind::Rdp)
+        && (input.host.starts_with('-')
+            || input
+                .host
+                .chars()
+                .any(|character| character.is_whitespace() || character.is_control()))
+    {
+        return Err(invalid("remote host contains unsupported characters"));
+    }
+    if input.kind == ConnectionKind::Ssh
+        && input
+            .username
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(invalid("SSH username contains unsupported characters"));
+    }
     if input.tags.len() > 32
         || input
             .tags
@@ -1535,6 +1571,17 @@ fn validate_connection_input(input: &ConnectionInput) -> Result<(), PublicError>
             .any(|tag| tag.trim().is_empty() || tag.len() > 64)
     {
         return Err(invalid("connection tags exceed limits"));
+    }
+    if input.kind == ConnectionKind::Ssh
+        && input.authentication == SshAuthenticationKind::PrivateKey
+        && input.private_key_path.trim().is_empty()
+    {
+        return Err(invalid("private-key authentication requires a key path"));
+    }
+    if input.openssh_fallback && input.authentication != SshAuthenticationKind::Agent {
+        return Err(invalid(
+            "OpenSSH fallback requires agent authentication to keep secrets out of the terminal",
+        ));
     }
     match input.kind {
         ConnectionKind::Ssh | ConnectionKind::Rdp
@@ -1687,6 +1734,10 @@ fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
             username: connection.username.clone(),
             proxy_id: connection.proxy_id,
             terminal_profile_id: connection.terminal_profile_id,
+            authentication: connection.authentication,
+            private_key_path: connection.private_key_path.clone(),
+            allow_legacy_algorithms: connection.allow_legacy_algorithms,
+            openssh_fallback: connection.openssh_fallback,
             tags: connection.tags.clone(),
             notes: connection.notes.clone(),
         };
@@ -1709,6 +1760,8 @@ fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
             font_size: terminal.font_size,
             theme: terminal.theme.clone(),
             scrollback: terminal.scrollback,
+            encoding: terminal.encoding,
+            keymap: terminal.keymap,
         })?;
     }
     Ok(())
@@ -1902,7 +1955,7 @@ mod tests {
 
     #[test]
     fn connection_validation_should_enforce_endpoint_semantics() {
-        let remote = ConnectionInput {
+        let mut remote = ConnectionInput {
             folder_id: None,
             sort_order: 0,
             kind: ConnectionKind::Ssh,
@@ -1912,10 +1965,19 @@ mod tests {
             username: "operator".to_owned(),
             proxy_id: None,
             terminal_profile_id: None,
+            authentication: SshAuthenticationKind::Agent,
+            private_key_path: String::new(),
+            allow_legacy_algorithms: false,
+            openssh_fallback: false,
             tags: Vec::new(),
             notes: String::new(),
         };
         assert!(validate_connection_input(&remote).is_err());
+        remote.host = "server.internal".to_owned();
+        remote.username = "operator\nother".to_owned();
+        assert!(validate_connection_input(&remote).is_err());
+        remote.username = "operator".to_owned();
+        assert!(validate_connection_input(&remote).is_ok());
     }
 
     #[tokio::test]
@@ -1965,6 +2027,10 @@ mod tests {
                 username: "operator".to_owned(),
                 proxy_id: None,
                 terminal_profile_id: Some(terminal_id),
+                authentication: SshAuthenticationKind::Agent,
+                private_key_path: String::new(),
+                allow_legacy_algorithms: false,
+                openssh_fallback: false,
                 tags: vec!["critical".to_owned()],
                 notes: String::new(),
             })

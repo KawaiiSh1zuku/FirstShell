@@ -10,6 +10,9 @@
 | Web UI | React、Vite | MIT | 与 AGPL-3.0-only 兼容 |
 | UI 与测试 | `lucide-react`、Vitest、Testing Library、jsdom | MIT；间接依赖含 BSD-2-Clause、BlueOak-1.0.0 | 与 AGPL-3.0-only 兼容，BSD/BlueOak 文本进入发布 NOTICE |
 | SSH/SFTP | `russh`、`russh-sftp` | Apache-2.0 | 与 AGPL-3.0-only 兼容，保留 NOTICE 要求 |
+| 终端 | `@xterm/xterm`、`@xterm/addon-fit`、`portable-pty` | MIT | 与 AGPL-3.0-only 兼容；分发时保留上游许可证文本 |
+| 终端编码 | `encoding_rs` | (Apache-2.0 OR MIT) AND BSD-3-Clause | 与 AGPL-3.0-only 兼容；保留 Apache/MIT/BSD 文本与适用 notice |
+| 原生秘密输入 | `tinyfiledialogs` | zlib-acknowledgement | 与 AGPL-3.0-only 兼容；保留源文件声明，并在产品 NOTICE 中致谢 tinyfiledialogs |
 | 密码学 | RustCrypto XChaCha20-Poly1305、HKDF、SHA-2 | MIT OR Apache-2.0 | 与 AGPL-3.0-only 兼容 |
 | 本地凭据 | `keyring` 及平台后端 | MIT OR Apache-2.0 | 与 AGPL-3.0-only 兼容 |
 | 数据库 | `rusqlite`、bundled SQLite | MIT / public domain SQLite | 与 AGPL-3.0-only 兼容 |
@@ -20,7 +23,7 @@
 
 | 能力 | 首选 | 许可证 | 选择依据与门槛 |
 | --- | --- | --- | --- |
-| 终端 | `@xterm/xterm` 6 | MIT | 浏览器终端成熟方案；M2 引入时复核 addon 的独立许可证 |
+| 终端 | `@xterm/xterm` 6 | MIT | 已在 M2 引入并复核 fit addon、`portable-pty` 和编码依赖；后续 addon 仍需独立复核 |
 | ZMODEM | `zmodem2` 0.7 | MIT OR Apache-2.0 | 库形态适合接入终端流；M4 必须验证取消、错误恢复和互操作后才能采用 |
 | ZMODEM 备选 | `rzsz` 0.1 | Apache-2.0 | CLI 形态、版本较早；不作为默认嵌入方案 |
 | ZMODEM 排除候选 | `lrzsz2` 0.7 | GPL-3.0-or-later | 可与 AGPLv3 组合但义务更强，且 CLI 形态不符合当前边界 |
@@ -32,6 +35,6 @@ FreeRDP 的 Apache-2.0 结论来自上游 LICENSE；实际打包前还必须审�
 ## 发布义务
 
 - 分发桌面端、`syncd` 或 `relayd` 时提供对应 AGPL-3.0 源码获取方式。
-- 生成第三方 NOTICE/SBOM，保留 Apache、MIT、BSD、BlueOak、MPL、Unicode 和其他适用文本。
+- 生成第三方 NOTICE/SBOM，保留 Apache、MIT、BSD、BlueOak、MPL、Unicode、zlib-acknowledgement 和其他适用文本；对 tinyfiledialogs 给出产品致谢。
 - 禁止引入无许可证、仅源代码可见、自定义非商业条款、SSPL、BUSL 或与 AGPL 不兼容的依赖。
 - 候选依赖只有在真正加入锁文件并重新通过自动与人工审查后才算获准使用。

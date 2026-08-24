@@ -35,6 +35,10 @@ export function EntityDialog(props: EntityDialogProps) {
   const [username, setUsername] = useState(existingConnection?.username ?? "");
   const [proxyId, setProxyId] = useState(existingConnection?.proxyId ?? "");
   const [terminalId, setTerminalId] = useState(existingConnection?.terminalProfileId ?? "");
+  const [authentication, setAuthentication] = useState<ConnectionInput["authentication"]>(existingConnection?.authentication ?? "agent");
+  const [privateKeyPath, setPrivateKeyPath] = useState(existingConnection?.privateKeyPath ?? "");
+  const [allowLegacyAlgorithms, setAllowLegacyAlgorithms] = useState(existingConnection?.allowLegacyAlgorithms ?? false);
+  const [opensshFallback, setOpensshFallback] = useState(existingConnection?.opensshFallback ?? false);
   const [tags, setTags] = useState(existingConnection?.tags.join(", ") ?? "");
   const [notes, setNotes] = useState(existingFolder?.notes ?? existingConnection?.notes ?? "");
 
@@ -65,6 +69,10 @@ export function EntityDialog(props: EntityDialogProps) {
           username: local ? "" : username,
           proxyId: proxyId || null,
           terminalProfileId: terminalId || null,
+          authentication,
+          privateKeyPath: kind === "ssh" && authentication === "private_key" ? privateKeyPath : "",
+          allowLegacyAlgorithms: kind === "ssh" && allowLegacyAlgorithms,
+          opensshFallback: kind === "ssh" && authentication === "agent" && opensshFallback,
           tags: tags.split(",").map((value) => value.trim()).filter(Boolean),
           notes,
         },
@@ -110,6 +118,16 @@ export function EntityDialog(props: EntityDialogProps) {
                 <label><span>代理</span><select value={proxyId} onChange={(event) => setProxyId(event.target.value)}><option value="">Direct</option>{snapshot.proxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name}</option>)}</select></label>
                 <label><span>终端配置</span><select value={terminalId} onChange={(event) => setTerminalId(event.target.value)}><option value="">默认</option>{snapshot.terminalProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label>
               </div>
+              {kind === "ssh" && <>
+                <div className="form-row">
+                  <label><span>认证</span><select value={authentication} onChange={(event) => setAuthentication(event.target.value as ConnectionInput["authentication"])}><option value="agent">SSH Agent</option><option value="password">密码</option><option value="private_key">私钥</option><option value="keyboard_interactive">Keyboard Interactive</option></select></label>
+                  {authentication === "private_key" ? <label><span>私钥路径</span><input required maxLength={4096} value={privateKeyPath} onChange={(event) => setPrivateKeyPath(event.target.value)} /></label> : <span />}
+                </div>
+                <div className="binary-options">
+                  <label><input type="checkbox" checked={allowLegacyAlgorithms} onChange={(event) => setAllowLegacyAlgorithms(event.target.checked)} /><span>允许此主机使用兼容算法</span></label>
+                  <label><input type="checkbox" checked={authentication === "agent" && opensshFallback} disabled={authentication !== "agent"} onChange={(event) => setOpensshFallback(event.target.checked)} /><span>允许 OpenSSH 兼容回退（仅 Agent）</span></label>
+                </div>
+              </>}
               <label><span>标签</span><input maxLength={512} value={tags} onChange={(event) => setTags(event.target.value)} /></label>
             </>
           )}

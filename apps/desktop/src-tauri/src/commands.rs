@@ -19,6 +19,8 @@ use tauri::{State, WebviewWindow};
 pub struct DesktopState {
     /// Encrypted workspace use cases.
     pub workspace: Arc<WorkspaceService>,
+    /// Terminal session runtime and native credential boundary.
+    pub sessions: Arc<crate::session_commands::DesktopSessions>,
 }
 
 fn authorize_window_label(label: &str) -> Result<(), PublicError> {
@@ -75,11 +77,12 @@ pub async fn recover_vault(
 }
 
 #[tauri::command]
-pub fn lock_vault(
+pub async fn lock_vault(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<(), PublicError> {
     authorize(&window)?;
+    state.sessions.close_all().await;
     state.workspace.lock()
 }
 

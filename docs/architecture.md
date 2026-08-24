@@ -55,7 +55,7 @@ docs/
 
 ## 运行时模型
 
-每个逻辑远程会话由一个 actor 管理，持有明确状态机：`Created -> Connecting -> Authenticating -> Ready -> Reconnecting/Closing -> Closed`。外部只能通过带类型的句柄提交命令，不能直接共享底层连接对象。
+每个逻辑远程会话由一个 actor 管理，持有明确的公开状态机：`Connecting -> Authenticating -> Ready -> Disconnected/Reconnecting -> Closing -> Closed`。外部只能通过带类型的句柄提交命令，不能直接共享底层连接对象。
 
 运行时遵循以下规则：
 
@@ -65,6 +65,8 @@ docs/
 - 阻塞式密钥环、SQLite 和系统调用放入专用线程或受控阻塞池。
 - 高频监控数据在 Rust 侧聚合和降采样，再推送给前端。
 - 错误使用稳定代码、可安全展示的上下文和内部错误链，禁止把凭据写入错误文本。
+
+M2 已将这些规则落实为 32 个会话的默认注册上限、256 条交互消息队列、64 KiB 单次输入上限和 30 秒连接超时。断开后的输入不会排队或重放，只有用户显式重连才会新建 transport。本地 PTY 由专用阻塞线程独占 master、writer 和 child，reader 在独立线程输出字节，避免在 Tokio worker 上同步等待或跨锁死锁。详见 [ADR-0005](./adr/0005-ssh-session-runtime.md) 和 [M2 验收记录](./verification/m2.md)。
 
 ### 双通道 SSH
 
@@ -87,13 +89,15 @@ Session -> Connector -> Direct | SOCKS5 | HTTP CONNECT | System Proxy | SSH Jump
 
 Connector 负责 DNS 策略、连接超时、取消、代理认证、跳板链循环检测和审计标签。跳板链必须设置最大深度，系统代理解析后的结果会固化到本次连接上下文，避免运行中配置漂移。
 
-SSH 默认使用纯 Rust 实现承载可控的终端、SFTP 和隧道能力；平台 OpenSSH 作为兼容回退，仅在用户明确启用且能力探测失败时使用。回退进程不得通过命令行参数接收秘密。
+SSH 默认使用纯 Rust `russh` 实现承载可控的终端、SFTP 和隧道能力。M2 的交互连接使用 20 秒 keepalive、连续 3 次失败阈值和 120 秒 inactivity timeout。平台 OpenSSH 只在用户明确启用且纯 Rust 路径返回连接类兼容错误时回退；认证失败、未知或变化的 host key 不得触发回退。桌面端回退目前只允许 agent 认证，并固定使用应用自有 known_hosts 和参数终止符，因此秘密不会进入 argv。
 
 ## 桌面 IPC 与状态所有权
 
 Tauri command 用于低频请求/响应，例如连接配置 CRUD、解锁仓库和创建会话。Tauri channel/event 用于终端输出、传输进度和监控采样。只有实际基准证明高频二进制流达不到预算时，才考虑受鉴权的一次性 loopback transport，并以 ADR 记录。
 
 Rust 是连接、传输、凭据和任务生命周期的唯一真相源。前端状态库只保存布局、选择、过滤器、临时表单和后端句柄，不复制远程会话状态机。
+
+M2 通过 Tauri `Channel` 将公开状态、脱敏错误、host key 证据和终端输出推送到 xterm.js。WebView 发起的连接请求只携带连接 ID 或无秘密的快速连接字段；密码、keyboard-interactive 响应和私钥口令由 Rust 原生对话框取得，并在 keyring/可清零容器中短期使用。前端异步 session 生命周期以 generation 标识，开发模式重复挂载产生的迟到会话会立即关闭。
 
 Tauri capability 按窗口标签和命令最小授权；不暴露通用 shell、任意文件系统或任意 HTTP API。
 
@@ -109,6 +113,8 @@ Tauri capability 按窗口标签和命令最小授权；不暴露通用 shell、
 | 底部面板 | SFTP 文件管理器、传输队列、问题与任务状态 |
 
 面板可折叠、调整大小并保存工作区，但重要状态不能只靠颜色表达。终端和文件传输在面板隐藏后仍继续运行，关闭会话时必须明确提示仍在运行的任务。
+
+M2 中央工作区支持多标签和每标签最多四个独立分屏，分屏方向可按行或列切换；窄于 760 px 时列分屏自动改为纵向排列。每个 pane 独立管理 xterm、尺寸同步、host key 确认、重连与日志状态，终端模块动态加载以避免扩大主入口包。
 
 应用外观提供浅色、深色和跟随系统三态切换，使用语义颜色 token 保持两套配色下的层级、焦点与错误状态一致。该非敏感偏好由前端本地保存并可在 Vault 锁定页切换；终端配色仍由 M2 的终端配置独立管理，不能把应用外观主题误作终端主题。
 

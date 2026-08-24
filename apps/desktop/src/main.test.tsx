@@ -5,6 +5,10 @@ import { createPreviewBridge } from "./bridge";
 import { App } from "./main";
 import type { VaultStatus } from "./types";
 
+vi.mock("./TerminalWorkspace", () => ({
+  TerminalWorkspace: () => <div data-testid="terminal-workspace" />,
+}));
+
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
@@ -132,5 +136,18 @@ describe("M1 workspace accessibility and vault state", () => {
     expect(system.getAttribute("aria-pressed")).toBe("true");
     expect(document.documentElement.dataset.theme).toBe("system");
     expect(window.localStorage.getItem("firstshell.theme")).toBe("system");
+  });
+
+  it("opens a temporary quick connection without adding it to the connection tree", async () => {
+    const bridge = createPreviewBridge();
+    const user = userEvent.setup();
+    render(<App bridge={bridge} />);
+    await screen.findByText("Edge Gateway");
+    await user.click(screen.getByRole("button", { name: "快速连接" }));
+    await user.type(screen.getByLabelText("主机"), "temporary.example");
+    await user.type(screen.getByLabelText("用户名"), "operator");
+    await user.click(screen.getByRole("button", { name: "连接" }));
+    expect(await screen.findByRole("tab", { name: /temporary\.example/ })).toBeTruthy();
+    expect(screen.queryByRole("treeitem", { name: /temporary\.example/ })).toBeNull();
   });
 });

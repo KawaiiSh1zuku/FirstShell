@@ -1,5 +1,8 @@
 export type ConnectionKind = "ssh" | "rdp" | "local";
 export type ProxyKind = "direct" | "socks5" | "http_connect" | "system";
+export type SshAuthenticationKind = "agent" | "password" | "private_key" | "keyboard_interactive";
+export type TerminalEncoding = "utf8" | "gb18030" | "big5";
+export type TerminalKeymap = "xterm" | "windows" | "emacs";
 
 export interface VaultStatus {
   initialized: boolean;
@@ -37,8 +40,14 @@ export interface ConnectionProfile {
   username: string;
   proxyId: string | null;
   terminalProfileId: string | null;
+  authentication: SshAuthenticationKind;
+  privateKeyPath: string;
+  allowLegacyAlgorithms: boolean;
+  opensshFallback: boolean;
   tags: string[];
   notes: string;
+  /** Frontend-only marker for a quick connection that is never persisted. */
+  temporary?: boolean;
 }
 
 export interface ConnectionInput {
@@ -51,6 +60,10 @@ export interface ConnectionInput {
   username: string;
   proxyId: string | null;
   terminalProfileId: string | null;
+  authentication: SshAuthenticationKind;
+  privateKeyPath: string;
+  allowLegacyAlgorithms: boolean;
+  opensshFallback: boolean;
   tags: string[];
   notes: string;
 }
@@ -81,6 +94,8 @@ export interface TerminalProfile {
   fontSize: number;
   theme: string;
   scrollback: number;
+  encoding: TerminalEncoding;
+  keymap: TerminalKeymap;
 }
 
 export interface TerminalProfileInput {
@@ -89,6 +104,8 @@ export interface TerminalProfileInput {
   fontSize: number;
   theme: string;
   scrollback: number;
+  encoding: TerminalEncoding;
+  keymap: TerminalKeymap;
 }
 
 export interface WorkspaceSnapshot {
@@ -133,6 +150,56 @@ export interface PublicError {
   code: string;
   message: string;
   correlationId: string;
+}
+
+export type SessionState = "connecting" | "authenticating" | "ready" | "disconnected" | "reconnecting" | "closing" | "closed";
+
+export interface TerminalSize {
+  cols: number;
+  rows: number;
+  pixelWidth: number;
+  pixelHeight: number;
+}
+
+export interface SessionSnapshot {
+  id: string;
+  state: SessionState;
+  size: TerminalSize;
+}
+
+export type SessionEvent =
+  | { type: "state"; state: SessionState }
+  | { type: "output"; data: number[] }
+  | { type: "banner"; text: string }
+  | { type: "exit"; code: number | null }
+  | { type: "error"; code: string; message: string };
+
+export interface DesktopSessionEvent {
+  sessionId: string;
+  event: SessionEvent;
+}
+
+export interface HostKeyEvidence {
+  host: string;
+  port: number;
+  algorithm: string;
+  fingerprint: string;
+  changed: boolean;
+  previousFingerprint: string | null;
+}
+
+export interface SessionLogReceipt {
+  path: string;
+}
+
+export interface QuickConnectInput {
+  host: string;
+  port: number;
+  username: string;
+  authentication: SshAuthenticationKind;
+  privateKeyPath: string;
+  allowLegacyAlgorithms: boolean;
+  opensshFallback: boolean;
 }
 
 export type Selection =

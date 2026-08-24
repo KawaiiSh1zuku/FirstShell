@@ -27,7 +27,7 @@ M1 冻结的 schema version 2 包含下列实际表。后续里程碑新增表�
 | `terminal_profiles` | id、revision | 字体、主题、键位、编码、行为配置 | 终端外观与交互 |
 | `ui_state` | workspace_id、revision | 布局、面板尺寸、最近标签 | 工作区恢复 |
 
-M0 的 `probe_records` 仍保留用于 schema 1 到 schema 2 的真实升级测试，不承载产品数据。`tunnel_profiles`、`snippets`、`known_hosts`、`command_history`、`transfer_jobs`、`sync_state` 和 `sync_outbox` 分别属于后续里程碑，只有迁移合入后才进入当前表清单。
+M0 的 `probe_records` 仍保留用于 schema 1 到 schema 2 的真实升级测试，不承载产品数据。`tunnel_profiles`、`snippets`、`command_history`、`transfer_jobs`、`sync_state` 和 `sync_outbox` 分别属于后续里程碑，只有迁移合入后才进入当前表清单。M2 的 known_hosts 是应用数据目录中的 OpenSSH 格式安全文件，不是数据库表；若后续需要同步或结构化管理，必须新增迁移和安全决策。
 
 不使用通用 EAV 表承载核心业务实体。具体表能提供更清晰的约束、迁移和查询计划；扩展字段通过版本化 payload 演进，而不是无限制 JSON 堆积。
 
@@ -59,6 +59,8 @@ record_key = HKDF(vault_key, table_name || record_id || key_version)
 
 Vault Key 与 Sync Key 相互独立：本地记录由 Vault Key 保护；进入同步 outbox 前，客户端将规范化对象重新封装为 Sync Key 密文。泄露同步服务数据不能用于解密本地数据库，撤销同步也不要求重写全部本地记录。
 
+M2 不改变 schema version 2。连接加密 payload 新增认证类型、私钥路径、按主机弱算法开关和 OpenSSH 回退开关；终端 payload 新增编码和键位配置。字段使用 serde 默认值兼容 M1 已保存 payload，因此不需要数据库迁移。快速连接只存在于当前前端会话，不写入 SQLite；原生取得的 SSH 秘密只进入 OS keyring 和短期可清零内存，不进入连接 payload。
+
 ## 查询与搜索
 
 密文不支持可靠的数据库全文检索。解锁后，应用按用户范围逐批解密名称、标签、片段和可选历史，建立内存搜索索引；锁定时销毁。索引设内存上限，对大历史采用按需分页，不把明文索引写回磁盘。
@@ -84,7 +86,7 @@ Vault Key 与 Sync Key 相互独立：本地记录由 Vault Key 保护；进入�
 | 数据 | 默认策略 |
 | --- | --- |
 | 终端滚屏 | 仅内存，受终端行数上限控制 |
-| 会话日志 | 默认关闭，用户显式开启并选择路径 |
+| 会话日志 | 默认关闭；显式开启后写入应用数据目录，只记录远端输出并保留 7 天 |
 | 监控采样 | 内存环形缓冲，默认不持久化 |
 | 命令历史 | 可配置、加密、支持按连接或全局清除 |
 | 传输任务 | 完成后保留有限元数据，不保留文件内容 |

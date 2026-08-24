@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   ConnectionInput,
@@ -10,9 +10,15 @@ import type {
   ProxyInput,
   ProxyProfile,
   RestoreReceipt,
+  DesktopSessionEvent,
+  HostKeyEvidence,
+  QuickConnectInput,
   SearchResult,
   TerminalProfile,
   TerminalProfileInput,
+  SessionLogReceipt,
+  SessionSnapshot,
+  TerminalSize,
   VaultStatus,
   WorkspaceLayout,
   WorkspaceSnapshot,
@@ -46,6 +52,19 @@ export interface WorkspaceBridge {
   validateImport(fileName: string, password: string): Promise<ImportSummary>;
   restoreImport(fileName: string, password: string): Promise<RestoreReceipt>;
   onVaultLocked(callback: () => void): Promise<() => void>;
+  configureCredential(connectionId: string): Promise<boolean>;
+  credentialStatus(connectionId: string): Promise<boolean>;
+  openTerminal(connectionId: string, size: TerminalSize, onEvent: (value: DesktopSessionEvent) => void): Promise<SessionSnapshot>;
+  openQuickTerminal(input: QuickConnectInput, size: TerminalSize, onEvent: (value: DesktopSessionEvent) => void): Promise<SessionSnapshot>;
+  listTerminals(): Promise<SessionSnapshot[]>;
+  sendTerminalInput(sessionId: string, data: number[]): Promise<void>;
+  resizeTerminal(sessionId: string, size: TerminalSize): Promise<void>;
+  reconnectTerminal(sessionId: string): Promise<void>;
+  closeTerminal(sessionId: string): Promise<void>;
+  pendingHostKey(sessionId: string): Promise<HostKeyEvidence | null>;
+  approveHostKey(sessionId: string, fingerprint: string, previousFingerprint: string | null): Promise<void>;
+  startSessionLog(sessionId: string): Promise<SessionLogReceipt>;
+  stopSessionLog(sessionId: string): Promise<void>;
 }
 
 const tauriBridge: WorkspaceBridge = {
@@ -85,6 +104,28 @@ const tauriBridge: WorkspaceBridge = {
   restoreImport: (fileName, password) =>
     invoke("restore_workspace_import", { fileName, password }),
   onVaultLocked: async (callback) => listen("vault-locked", callback),
+  configureCredential: (connectionId) => invoke("configure_connection_credential", { connectionId }),
+  credentialStatus: (connectionId) => invoke("connection_credential_status", { connectionId }),
+  openTerminal: (connectionId, size, onEvent) => {
+    const channel = new Channel<DesktopSessionEvent>();
+    channel.onmessage = onEvent;
+    return invoke("open_terminal_session", { connectionId, size, onEvent: channel });
+  },
+  openQuickTerminal: (input, size, onEvent) => {
+    const channel = new Channel<DesktopSessionEvent>();
+    channel.onmessage = onEvent;
+    return invoke("open_quick_terminal", { input, size, onEvent: channel });
+  },
+  listTerminals: () => invoke("list_terminal_sessions"),
+  sendTerminalInput: (sessionId, data) => invoke("send_terminal_input", { sessionId, data }),
+  resizeTerminal: (sessionId, size) => invoke("resize_terminal", { sessionId, size }),
+  reconnectTerminal: (sessionId) => invoke("reconnect_terminal", { sessionId }),
+  closeTerminal: (sessionId) => invoke("close_terminal", { sessionId }),
+  pendingHostKey: (sessionId) => invoke("pending_host_key", { sessionId }),
+  approveHostKey: (sessionId, fingerprint, previousFingerprint) =>
+    invoke("approve_host_key", { sessionId, fingerprint, previousFingerprint }),
+  startSessionLog: (sessionId) => invoke("start_session_log", { sessionId }),
+  stopSessionLog: (sessionId) => invoke("stop_session_log", { sessionId }),
 };
 
 const previewSnapshot: WorkspaceSnapshot = {
@@ -105,6 +146,10 @@ const previewSnapshot: WorkspaceSnapshot = {
       username: "operator",
       proxyId: null,
       terminalProfileId: "terminal-default",
+      authentication: "agent",
+      privateKeyPath: "",
+      allowLegacyAlgorithms: false,
+      opensshFallback: false,
       tags: ["linux", "gateway"],
       notes: "",
     },
@@ -120,6 +165,10 @@ const previewSnapshot: WorkspaceSnapshot = {
       username: "dba",
       proxyId: null,
       terminalProfileId: "terminal-default",
+      authentication: "agent",
+      privateKeyPath: "",
+      allowLegacyAlgorithms: false,
+      opensshFallback: false,
       tags: ["postgres"],
       notes: "",
     },
@@ -135,6 +184,10 @@ const previewSnapshot: WorkspaceSnapshot = {
       username: "Administrator",
       proxyId: null,
       terminalProfileId: null,
+      authentication: "agent",
+      privateKeyPath: "",
+      allowLegacyAlgorithms: false,
+      opensshFallback: false,
       tags: ["windows"],
       notes: "",
     },
@@ -149,6 +202,8 @@ const previewSnapshot: WorkspaceSnapshot = {
       fontSize: 14,
       theme: "firstshell-dark",
       scrollback: 10000,
+      encoding: "utf8",
+      keymap: "xterm",
     },
   ],
 };
@@ -164,6 +219,7 @@ export function createPreviewBridge(): WorkspaceBridge {
     bottomOpen: true,
   };
   let sequence = 1;
+  const sessions = new Map<string, SessionSnapshot>();
   const nextId = (prefix: string) => `${prefix}-preview-${sequence++}`;
   const updateSnapshot = <T>(operation: () => T) => Promise.resolve(operation());
 
@@ -287,6 +343,38 @@ export function createPreviewBridge(): WorkspaceBridge {
       recoveryFileName: "before-import-preview.db",
     }),
     onVaultLocked: async () => () => undefined,
+    configureCredential: async () => true,
+    credentialStatus: async () => true,
+    openTerminal: async (_connectionId, size, onEvent) => {
+      const value: SessionSnapshot = { id: nextId("session"), state: "ready", size };
+      sessions.set(value.id, value);
+      queueMicrotask(() => onEvent({ sessionId: value.id, event: { type: "state", state: "ready" } }));
+      return value;
+    },
+    openQuickTerminal: async (_input, size, onEvent) => {
+      const value: SessionSnapshot = { id: nextId("quick-session"), state: "ready", size };
+      sessions.set(value.id, value);
+      queueMicrotask(() => onEvent({ sessionId: value.id, event: { type: "state", state: "ready" } }));
+      return value;
+    },
+    listTerminals: async () => [...sessions.values()],
+    sendTerminalInput: async (sessionId, data) => {
+      if (!sessions.has(sessionId)) throw new Error("session not found");
+      void data;
+    },
+    resizeTerminal: async (sessionId, size) => {
+      const value = sessions.get(sessionId);
+      if (value) sessions.set(sessionId, { ...value, size });
+    },
+    reconnectTerminal: async (sessionId) => {
+      const value = sessions.get(sessionId);
+      if (value) sessions.set(sessionId, { ...value, state: "ready" });
+    },
+    closeTerminal: async (sessionId) => { sessions.delete(sessionId); },
+    pendingHostKey: async () => null,
+    approveHostKey: async () => undefined,
+    startSessionLog: async (sessionId) => ({ path: `preview/session-logs/${sessionId}.log` }),
+    stopSessionLog: async () => undefined,
   };
 }
 

@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useMemo, useReducer } from "react";
+import { StrictMode, Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -22,11 +22,13 @@ import {
   Trash2,
   Undo2,
   X,
+  Zap,
 } from "lucide-react";
 import { BackupDialog } from "./BackupDialog";
 import { workspaceBridge, type WorkspaceBridge } from "./bridge";
 import { EntityDialog } from "./EntityDialog";
 import { SettingsDialog } from "./SettingsDialog";
+import { QuickConnectDialog } from "./QuickConnectDialog";
 import { ThemeControl, useThemeMode } from "./ThemeControl";
 import type {
   ConnectionInput,
@@ -35,6 +37,7 @@ import type {
   FolderInput,
   ProxyInput,
   ProxyProfile,
+  QuickConnectInput,
   PublicError,
   SearchResult,
   Selection,
@@ -46,6 +49,8 @@ import type {
 } from "./types";
 import { VaultGate } from "./VaultGate";
 import "./styles.css";
+
+const TerminalWorkspace = lazy(() => import("./TerminalWorkspace").then((module) => ({ default: module.TerminalWorkspace })));
 
 type EntityDialogState =
   | { kind: "folder"; value?: Folder }
@@ -71,6 +76,7 @@ interface AppState {
   layout: WorkspaceLayout;
   selection: Selection;
   openTabs: string[];
+  quickConnections: ConnectionProfile[];
   activeTab: string | null;
   query: string;
   searchResults: SearchResult[];
@@ -79,6 +85,7 @@ interface AppState {
   entityDialog: EntityDialogState;
   settingsOpen: boolean;
   backupOpen: boolean;
+  quickConnectOpen: boolean;
   activities: ActivityItem[];
   undoDelete: UndoDelete | null;
 }
@@ -101,6 +108,7 @@ const initialState: AppState = {
   layout: defaultLayout,
   selection: null,
   openTabs: [],
+  quickConnections: [],
   activeTab: null,
   query: "",
   searchResults: [],
@@ -109,6 +117,7 @@ const initialState: AppState = {
   entityDialog: null,
   settingsOpen: false,
   backupOpen: false,
+  quickConnectOpen: false,
   activities: [],
   undoDelete: null,
 };
@@ -122,12 +131,14 @@ function reducer(state: AppState, action: Action): AppState {
       snapshot: null,
       selection: null,
       openTabs: [],
+      quickConnections: [],
       activeTab: null,
       query: "",
       searchResults: [],
       entityDialog: null,
       settingsOpen: false,
       backupOpen: false,
+      quickConnectOpen: false,
       error: null,
       undoDelete: null,
     };
@@ -150,6 +161,8 @@ function errorMessage(error: unknown): string {
 export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [themeMode, setThemeMode] = useThemeMode();
+  const [readySessions, setReadySessions] = useState(0);
+  const addActivity = useCallback((message: string) => dispatch({ type: "activity", message }), []);
 
   const perform = useCallback(async <T,>(operation: () => Promise<T>, activity?: string): Promise<T> => {
     dispatch({ type: "patch", value: { busy: true, error: null } });
@@ -270,6 +283,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
       value: {
         openTabs,
         activeTab: state.activeTab === id ? openTabs.at(-1) ?? null : state.activeTab,
+        quickConnections: state.quickConnections.filter((connection) => connection.id !== id),
       },
     });
   };
@@ -349,13 +363,39 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
   }
 
   const snapshot = state.snapshot;
+  const allConnections = [...snapshot.connections, ...state.quickConnections];
   const selectedFolder = state.selection?.kind === "folder"
     ? snapshot.folders.find((value) => value.id === state.selection?.id)
     : undefined;
   const selectedConnection = state.selection?.kind === "connection"
     ? snapshot.connections.find((value) => value.id === state.selection?.id)
     : undefined;
-  const activeConnection = snapshot.connections.find((value) => value.id === state.activeTab);
+  const activeConnection = allConnections.find((value) => value.id === state.activeTab);
+
+  const openQuickConnection = async (input: QuickConnectInput) => {
+    const id = `quick-${crypto.randomUUID()}`;
+    const connection: ConnectionProfile = {
+      id,
+      folderId: null,
+      revision: 0,
+      sortOrder: 0,
+      kind: "ssh",
+      name: input.host,
+      host: input.host,
+      port: input.port,
+      username: input.username,
+      proxyId: null,
+      terminalProfileId: snapshot.terminalProfiles[0]?.id ?? null,
+      authentication: input.authentication,
+      privateKeyPath: input.privateKeyPath,
+      allowLegacyAlgorithms: input.allowLegacyAlgorithms,
+      opensshFallback: input.opensshFallback,
+      tags: [],
+      notes: "",
+      temporary: true,
+    };
+    dispatch({ type: "patch", value: { quickConnections: [...state.quickConnections, connection], openTabs: [...state.openTabs, id], activeTab: id, quickConnectOpen: false, error: null } });
+  };
 
   const deleteSelected = async () => {
     const label = selectedFolder?.name ?? selectedConnection?.name;
@@ -397,6 +437,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         <div className="title-actions">
           {!state.status.keyringAvailable && <span className="status-warning">系统密钥不可用</span>}
           <ThemeControl mode={themeMode} onChange={setThemeMode} />
+          <button className="icon-button" type="button" aria-label="快速连接" title="快速连接" onClick={() => dispatch({ type: "patch", value: { quickConnectOpen: true, error: null } })}><Zap size={16} /></button>
           <button className="icon-button" type="button" aria-label="备份与恢复" title="备份与恢复" onClick={() => dispatch({ type: "patch", value: { backupOpen: true, error: null } })}><Archive size={17} /></button>
           <button className="icon-button" type="button" aria-label="工作区配置" title="工作区配置" onClick={() => dispatch({ type: "patch", value: { settingsOpen: true, error: null } })}><Settings size={17} /></button>
           <button className="icon-button" type="button" aria-label="锁定仓库" title="锁定仓库" onClick={() => void lock()}><Lock size={17} /></button>
@@ -423,13 +464,13 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         <div className="terminal-surface">
           <div className="tabbar" role="tablist" aria-label="会话标签">
             {state.openTabs.map((id) => {
-              const connection = snapshot.connections.find((value) => value.id === id);
+              const connection = allConnections.find((value) => value.id === id);
               if (!connection) return null;
               return <div className="session-tab" key={id}><button className="tab-select" role="tab" aria-selected={state.activeTab === id} type="button" onClick={() => dispatch({ type: "patch", value: { activeTab: id, selection: { kind: "connection", id } } })}><ConnectionIcon kind={connection.kind} /><span>{connection.name}</span></button><button className="tab-close" type="button" aria-label={`关闭 ${connection.name}`} title="关闭" onClick={() => closeTab(id)}><X size={13} /></button></div>;
             })}
             {state.openTabs.length === 0 && <div className="tab-placeholder">工作区</div>}
           </div>
-          {activeConnection ? <ConnectionCanvas connection={activeConnection} /> : <WorkspaceOverview snapshot={snapshot} />}
+          {state.openTabs.length > 0 ? <Suspense fallback={<div className="terminal-loading">正在加载终端</div>}><TerminalWorkspace bridge={bridge} connections={state.openTabs.map((id) => allConnections.find((value) => value.id === id)).filter((value): value is ConnectionProfile => Boolean(value))} activeConnectionId={activeConnection?.id ?? null} profiles={snapshot.terminalProfiles} onActivity={addActivity} onReadyCountChange={setReadySessions} /></Suspense> : <WorkspaceOverview snapshot={snapshot} />}
         </div>
         {state.layout.bottomOpen && <>
           <PanelSeparator orientation="horizontal" label="调整活动面板高度" onPointerDown={(event) => beginResize("bottom", event)} onNudge={(delta) => nudgeLayout("bottom", delta)} />
@@ -448,16 +489,17 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
       </aside>
 
       <footer className="statusbar">
-        <span><Circle size={7} fill="currentColor" />未连接</span>
+        <span><Circle size={7} fill="currentColor" />{readySessions > 0 ? `${readySessions} 个活动终端` : "未连接"}</span>
         <span>{snapshot.connections.length} 个连接</span>
         {!state.layout.bottomOpen && <button type="button" onClick={() => void saveLayout({ ...state.layout, bottomOpen: true })}><Activity size={13} />活动</button>}
         {state.undoDelete && <button type="button" aria-label={`撤销删除 ${state.undoDelete.label}`} onClick={() => void undoDelete()}><Undo2 size={13} />撤销删除</button>}
-        <span>M1</span>
+        <span>M2</span>
       </footer>
 
       {state.entityDialog && <EntityDialog dialog={state.entityDialog} snapshot={snapshot} busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { entityDialog: null, error: null } })} onSaveFolder={saveFolder} onSaveConnection={saveConnection} />}
       {state.settingsOpen && <SettingsDialog snapshot={snapshot} busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { settingsOpen: false, error: null } })} onSaveProxy={async (input: ProxyInput, existing?: ProxyProfile) => { await perform(() => existing ? bridge.updateProxy(existing.id, existing.revision, input) : bridge.createProxy(input), existing ? "代理已更新" : "代理已创建"); await refresh(); }} onDeleteProxy={async (value) => { if (!window.confirm(`删除“${value.name}”？`)) return; await perform(() => bridge.deleteProxy(value.id, value.revision), "代理已删除"); await refresh(); }} onSaveTerminal={async (input: TerminalProfileInput, existing?: TerminalProfile) => { await perform(() => existing ? bridge.updateTerminal(existing.id, existing.revision, input) : bridge.createTerminal(input), existing ? "终端配置已更新" : "终端配置已创建"); await refresh(); }} onDeleteTerminal={async (value) => { if (!window.confirm(`删除“${value.name}”？`)) return; await perform(() => bridge.deleteTerminal(value.id, value.revision), "终端配置已删除"); await refresh(); }} />}
       {state.backupOpen && <BackupDialog busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { backupOpen: false, error: null } })} onExport={(password) => perform(() => bridge.exportWorkspace(password), "加密备份已导出")} onValidate={(fileName, password) => perform(() => bridge.validateImport(fileName, password), "备份验证通过")} onRestore={async (fileName, password) => { const result = await perform(() => bridge.restoreImport(fileName, password), "工作区已恢复"); await refresh(); return result; }} />}
+      {state.quickConnectOpen && <QuickConnectDialog busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { quickConnectOpen: false, error: null } })} onConnect={openQuickConnection} />}
     </main>
   );
 }
@@ -487,10 +529,6 @@ function ConnectionRow({ value, selected, onSelect }: { value: ConnectionProfile
 
 function WorkspaceOverview({ snapshot }: { snapshot: WorkspaceSnapshot }) {
   return <div className="workspace-overview"><div className="overview-mark">&gt;_</div><h2>FirstShell</h2><div className="overview-stats"><span><Server size={16} />{snapshot.connections.length} 连接</span><span><FolderIcon size={16} />{snapshot.folders.length} 文件夹</span><span><HardDrive size={16} />本地仓库</span></div></div>;
-}
-
-function ConnectionCanvas({ connection }: { connection: ConnectionProfile }) {
-  return <div className="connection-canvas"><div className="connection-identity"><ConnectionIcon kind={connection.kind} /><div><h2>{connection.name}</h2><span>{connection.kind === "local" ? "Local" : `${connection.username ? `${connection.username}@` : ""}${connection.host}:${connection.port}`}</span></div></div><div className="terminal-idle"><span>FirstShell</span><small>未连接</small></div></div>;
 }
 
 function Inspector({ folder, connection, snapshot }: { folder?: Folder; connection?: ConnectionProfile; snapshot: WorkspaceSnapshot }) {
