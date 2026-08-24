@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 
 use firstshell_domain::{ConnectionId, ErrorCode, PublicError};
 use firstshell_ssh::{
-    RemoteEntry, RunningTunnel, SftpError, SftpWorkspace, SshSessionFactory, TransferOptions,
-    TransferProgress, TransferReceipt, TunnelSnapshot, TunnelSpec,
+    ArchiveReceipt, RemoteEditDocument, RemoteEntry, RunningTunnel, SftpError, SftpWorkspace,
+    SshSessionFactory, TransferOptions, TransferProgress, TransferReceipt, TunnelSnapshot,
+    TunnelSpec,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
@@ -257,6 +258,16 @@ enum TransferOperation {
         local_path: PathBuf,
         options: TransferOptions,
     },
+    ZmodemUpload {
+        workspace_id: Uuid,
+        local_path: PathBuf,
+        remote_directory: String,
+    },
+    ZmodemDownload {
+        workspace_id: Uuid,
+        remote_path: String,
+        local_path: PathBuf,
+    },
 }
 
 #[derive(Clone)]
@@ -490,6 +501,8 @@ pub async fn close_sftp_workspace(
                 &record.operation,
                 TransferOperation::Upload { workspace_id: id, .. }
                     | TransferOperation::Download { workspace_id: id, .. }
+                    | TransferOperation::ZmodemUpload { workspace_id: id, .. }
+                    | TransferOperation::ZmodemDownload { workspace_id: id, .. }
                     if *id == workspace_id
             )
         }) {
@@ -586,6 +599,55 @@ pub async fn chmod_sftp_entry(
     ready_sftp(&state, workspace_id)
         .await?
         .chmod(&path, mode)
+        .await
+        .map_err(map_sftp)
+}
+
+#[tauri::command]
+pub async fn open_remote_text(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    workspace_id: Uuid,
+    path: String,
+) -> Result<RemoteEditDocument, PublicError> {
+    authorize(&window)?;
+    ready_sftp(&state, workspace_id)
+        .await?
+        .open_text(&path)
+        .await
+        .map_err(map_sftp)
+}
+
+#[tauri::command]
+pub async fn save_remote_text(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    workspace_id: Uuid,
+    path: String,
+    expected_fingerprint: String,
+    content: String,
+    utf8_bom: bool,
+) -> Result<RemoteEditDocument, PublicError> {
+    authorize(&window)?;
+    ready_sftp(&state, workspace_id)
+        .await?
+        .save_text(&path, &expected_fingerprint, &content, utf8_bom)
+        .await
+        .map_err(map_sftp)
+}
+
+#[tauri::command]
+pub async fn create_remote_archive(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    workspace_id: Uuid,
+    sources: Vec<String>,
+    destination: String,
+) -> Result<ArchiveReceipt, PublicError> {
+    authorize(&window)?;
+    ready_sftp(&state, workspace_id)
+        .await?
+        .create_archive(&sources, &destination)
         .await
         .map_err(map_sftp)
 }
@@ -756,6 +818,123 @@ pub async fn choose_sftp_download(
             remote_path: remote_path.clone(),
             local_path: PathBuf::from(selected),
             options,
+        },
+        TransferSnapshot {
+            id: Uuid::new_v4(),
+            workspace_id,
+            generation: 0,
+            direction: TransferDirection::Download,
+            name,
+            remote_path,
+            status: TransferStatus::Queued,
+            transferred: 0,
+            total: 0,
+            resumed: false,
+            sha256: None,
+            error: None,
+        },
+    )
+    .await?;
+    spawn_transfer(operations, snapshot.id, 0, Arc::new(on_event));
+    Ok(Some(snapshot))
+}
+
+#[tauri::command]
+pub async fn choose_zmodem_upload(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    workspace_id: Uuid,
+    remote_directory: String,
+    on_event: Channel<TransferSnapshot>,
+) -> Result<Option<TransferSnapshot>, PublicError> {
+    authorize(&window)?;
+    let _ = ready_sftp(&state, workspace_id).await?;
+    let selected = tokio::task::spawn_blocking(|| {
+        tinyfiledialogs::open_file_dialog("Select one file for ZMODEM upload", "", None)
+    })
+    .await
+    .map_err(|_| public(ErrorCode::Internal, "native file picker stopped"))?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let local_path = tokio::fs::canonicalize(PathBuf::from(selected))
+        .await
+        .map_err(|_| public(ErrorCode::InvalidInput, "selected file is unavailable"))?;
+    let metadata = tokio::fs::symlink_metadata(&local_path)
+        .await
+        .map_err(|_| public(ErrorCode::InvalidInput, "selected file is unavailable"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(public(
+            ErrorCode::InvalidInput,
+            "ZMODEM upload requires one regular file",
+        ));
+    }
+    let name = local_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| public(ErrorCode::InvalidInput, "selected file name is invalid"))?
+        .to_owned();
+    let remote_path = join_remote_display(&remote_directory, &name)?;
+    let operations = Arc::clone(&state.operations);
+    let snapshot = queue_transfer(
+        &operations,
+        TransferOperation::ZmodemUpload {
+            workspace_id,
+            local_path,
+            remote_directory,
+        },
+        TransferSnapshot {
+            id: Uuid::new_v4(),
+            workspace_id,
+            generation: 0,
+            direction: TransferDirection::Upload,
+            name,
+            remote_path,
+            status: TransferStatus::Queued,
+            transferred: 0,
+            total: metadata.len(),
+            resumed: false,
+            sha256: None,
+            error: None,
+        },
+    )
+    .await?;
+    spawn_transfer(operations, snapshot.id, 0, Arc::new(on_event));
+    Ok(Some(snapshot))
+}
+
+#[tauri::command]
+pub async fn choose_zmodem_download(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    workspace_id: Uuid,
+    remote_path: String,
+    on_event: Channel<TransferSnapshot>,
+) -> Result<Option<TransferSnapshot>, PublicError> {
+    authorize(&window)?;
+    let _ = ready_sftp(&state, workspace_id).await?;
+    let name = remote_path
+        .rsplit('/')
+        .next()
+        .filter(|value| !value.is_empty() && value.len() <= 255)
+        .ok_or_else(|| public(ErrorCode::InvalidInput, "remote ZMODEM path is invalid"))?
+        .to_owned();
+    let picker_name = name.clone();
+    let selected = tokio::task::spawn_blocking(move || {
+        tinyfiledialogs::save_file_dialog("Save ZMODEM download", &picker_name)
+    })
+    .await
+    .map_err(|_| public(ErrorCode::Internal, "native save dialog stopped"))?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let operations = Arc::clone(&state.operations);
+    let snapshot = queue_transfer(
+        &operations,
+        TransferOperation::ZmodemDownload {
+            workspace_id,
+            remote_path: remote_path.clone(),
+            local_path: PathBuf::from(selected),
         },
         TransferSnapshot {
             id: Uuid::new_v4(),
@@ -1042,7 +1221,9 @@ async fn run_transfer(
     .await;
     let workspace_id = match &record.operation {
         TransferOperation::Upload { workspace_id, .. }
-        | TransferOperation::Download { workspace_id, .. } => *workspace_id,
+        | TransferOperation::Download { workspace_id, .. }
+        | TransferOperation::ZmodemUpload { workspace_id, .. }
+        | TransferOperation::ZmodemDownload { workspace_id, .. } => *workspace_id,
     };
     let Some(workspace) = transfer_workspace(&operations, workspace_id).await else {
         drop(permit);
@@ -1122,6 +1303,24 @@ async fn execute_transfer(
         } => {
             workspace
                 .download(remote_path, local_path, *options, progress, cancellation)
+                .await
+        }
+        TransferOperation::ZmodemUpload {
+            local_path,
+            remote_directory,
+            ..
+        } => {
+            workspace
+                .zmodem_upload(local_path, remote_directory, progress, cancellation)
+                .await
+        }
+        TransferOperation::ZmodemDownload {
+            remote_path,
+            local_path,
+            ..
+        } => {
+            workspace
+                .zmodem_download(remote_path, local_path, progress, cancellation)
                 .await
         }
     }
@@ -1351,7 +1550,7 @@ fn tunnel_snapshot(id: Uuid, record: &TunnelRecord) -> DesktopTunnelSnapshot {
     }
 }
 
-fn approve_factory(
+pub(crate) fn approve_factory(
     factory: &SshSessionFactory,
     fingerprint: &str,
     previous_fingerprint: Option<&str>,
@@ -1367,7 +1566,7 @@ fn approve_factory(
     }
 }
 
-fn validate_fingerprints(
+pub(crate) fn validate_fingerprints(
     fingerprint: &str,
     previous_fingerprint: Option<&str>,
 ) -> Result<(), PublicError> {
@@ -1384,8 +1583,16 @@ fn validate_fingerprints(
     }
 }
 
-fn map_sftp(_error: firstshell_ssh::SftpError) -> PublicError {
-    public(ErrorCode::InvalidInput, "SFTP operation failed")
+fn map_sftp(error: firstshell_ssh::SftpError) -> PublicError {
+    match error {
+        SftpError::Conflict => public(ErrorCode::Conflict, "remote file changed or already exists"),
+        SftpError::Timeout => public(ErrorCode::Timeout, "remote operation timed out"),
+        SftpError::OutputLimit => public(
+            ErrorCode::ResourceExhausted,
+            "remote operation output exceeded its limit",
+        ),
+        _ => public(ErrorCode::InvalidInput, "SFTP operation failed"),
+    }
 }
 
 #[cfg(test)]

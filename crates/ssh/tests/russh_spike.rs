@@ -1070,6 +1070,7 @@ async fn m3_sftp_workspace_should_manage_files_resume_and_reject_symlinks() -> R
     verify_resumable_transfers(Arc::clone(&workspace), local.path()).await?;
     workspace.delete("ops/escape-link").await?;
     workspace.delete("ops/renamed.bin").await?;
+    workspace.delete("ops/edit.txt").await?;
     workspace.delete("ops/large.bin").await?;
     workspace.delete("ops").await?;
     workspace.close().await;
@@ -1137,6 +1138,36 @@ async fn verify_sftp_safety_and_metadata(
     ensure!(
         renamed_entry.permissions.map(|mode| mode & 0o7777) == Some(0o640),
         "chmod result was not observable"
+    );
+    std::fs::write(fixture.root.path().join("ops/edit.txt"), b"original\n")?;
+    let opened = workspace.open_text("ops/edit.txt").await?;
+    ensure!(
+        opened.content == "original\n",
+        "remote text was not decoded"
+    );
+    let saved = workspace
+        .save_text("ops/edit.txt", &opened.fingerprint, "updated\n", false)
+        .await?;
+    ensure!(
+        saved.content == "updated\n",
+        "remote text save was not observable"
+    );
+    std::fs::write(
+        fixture.root.path().join("ops/edit.txt"),
+        b"external change\n",
+    )?;
+    ensure!(
+        matches!(
+            workspace
+                .save_text("ops/edit.txt", &saved.fingerprint, "stale write\n", false)
+                .await,
+            Err(SftpError::Conflict)
+        ),
+        "stale remote editor fingerprint must fail closed"
+    );
+    ensure!(
+        std::fs::read(fixture.root.path().join("ops/edit.txt"))? == b"external change\n",
+        "conflict handling changed the remote file"
     );
     Ok(())
 }

@@ -1,7 +1,7 @@
-import { Activity, ArrowDownToLine, ArrowUp, ArrowUpFromLine, ChevronDown, ChevronRight, FilePenLine, Folder, FolderOpen, FolderPlus, KeyRound, Network, Pause, Play, RefreshCw, RotateCcw, Settings2, ShieldCheck, Square, Trash2 } from "lucide-react";
+import { Activity, Archive, ArrowDownToLine, ArrowUp, ArrowUpFromLine, ChevronDown, ChevronRight, FilePenLine, Folder, FolderOpen, FolderPlus, KeyRound, Network, Pause, Play, Radio, RefreshCw, RotateCcw, Settings2, ShieldCheck, Square, Trash2, X } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkspaceBridge } from "./bridge";
-import type { ConnectionProfile, DesktopTunnelSnapshot, HostKeyEvidence, RemoteEntry, SftpWorkspaceSnapshot, TransferOptions, TransferSnapshot, TransferStatus, TunnelKind } from "./types";
+import type { ConnectionProfile, DesktopTunnelSnapshot, HostKeyEvidence, RemoteEditDocument, RemoteEntry, SftpWorkspaceSnapshot, TransferOptions, TransferSnapshot, TransferStatus, TunnelKind } from "./types";
 
 interface OperationsWorkspaceProps {
   bridge: WorkspaceBridge;
@@ -38,6 +38,8 @@ export function OperationsWorkspace(props: OperationsWorkspaceProps) {
   const [options, setOptions] = useState(defaultTransferOptions);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editDocument, setEditDocument] = useState<RemoteEditDocument | null>(null);
+  const [editContent, setEditContent] = useState("");
   const readyConnectionKey = [...props.readyConnectionIds].sort().join("\u0000");
   const workspace = workspaces[connectionId] ?? null;
 
@@ -244,6 +246,47 @@ export function OperationsWorkspace(props: OperationsWorkspaceProps) {
     } catch (reason) { setError(message(reason)); }
   };
 
+  const openEditor = async () => {
+    if (!workspace || workspace.state !== "ready" || selected?.kind !== "file") return;
+    setBusy(true); setError(null);
+    try { const document = await props.bridge.openRemoteText(workspace.id, selected.path); setEditDocument(document); setEditContent(document.content); }
+    catch (reason) { setError(message(reason)); }
+    finally { setBusy(false); }
+  };
+
+  const saveEditor = async () => {
+    if (!workspace || !editDocument) return;
+    setBusy(true); setError(null);
+    try {
+      const saved = await props.bridge.saveRemoteText(workspace.id, editDocument.path, editDocument.fingerprint, editContent, editDocument.utf8Bom);
+      setEditDocument(saved); setEditContent(saved.content); props.onActivity(`远程文件已安全保存：${saved.path}`); await loadDirectory(path);
+    } catch (reason) { setError(message(reason)); }
+    finally { setBusy(false); }
+  };
+
+  const archiveSelected = async () => {
+    if (!workspace || workspace.state !== "ready" || !selected) return;
+    const base = selected.name.replace(/\.(tar\.gz|tgz)$/i, "");
+    const destination = window.prompt("压缩包路径（.tar.gz）", `${path ? `${path}/` : ""}${base}.tar.gz`);
+    if (!destination) return;
+    setBusy(true); setError(null);
+    try { const receipt = await props.bridge.createRemoteArchive(workspace.id, [selected.path], destination); props.onActivity(`远程压缩包已创建：${receipt.path}（${formatBytes(receipt.bytes)}）`); await loadDirectory(path); }
+    catch (reason) { setError(message(reason)); }
+    finally { setBusy(false); }
+  };
+
+  const zmodemUpload = async () => {
+    if (!workspace || workspace.state !== "ready") return;
+    try { const queued = await props.bridge.chooseZmodemUpload(workspace.id, path, updateTransfer); if (queued) { setTransfers((current) => mergeTransfers(current, [queued])); setTab("transfers"); props.onActivity("ZMODEM 上传已加入受控队列"); } }
+    catch (reason) { setError(message(reason)); }
+  };
+
+  const zmodemDownload = async () => {
+    if (!workspace || workspace.state !== "ready" || selected?.kind !== "file") return;
+    try { const queued = await props.bridge.chooseZmodemDownload(workspace.id, selected.path, updateTransfer); if (queued) { setTransfers((current) => mergeTransfers(current, [queued])); setTab("transfers"); props.onActivity("ZMODEM 下载已加入受控队列"); } }
+    catch (reason) { setError(message(reason)); }
+  };
+
   return (
     <section className="operations-panel" aria-label="文件与网络工具" hidden={props.hidden}>
       <header className="operations-header">
@@ -257,11 +300,12 @@ export function OperationsWorkspace(props: OperationsWorkspaceProps) {
       </header>
       {error && <div className="operations-error" role="alert">{error}</div>}
       <div className="operations-content">
-        {tab === "sftp" && <SftpView connections={sshConnections} connectionId={connectionId} onConnectionId={setConnectionId} root={root} onRoot={setRoot} workspace={workspace} path={path} entries={entries} treeDirectories={treeDirectories} expandedDirectories={expandedDirectories} selected={selected} busy={busy} options={options} onOptions={setOptions} onOpen={() => void openSftp()} onClose={() => void closeSftp()} onApprove={() => void approveSftp()} onOpenPath={(value) => void loadDirectory(value)} onToggleDirectory={(value) => void toggleDirectory(value)} onSelect={setSelected} onRefresh={() => void loadDirectory(path)} onMutate={(value) => void mutateEntry(value)} onUpload={() => void upload()} onDownload={() => void download()} />}
+        {tab === "sftp" && <SftpView connections={sshConnections} connectionId={connectionId} onConnectionId={setConnectionId} root={root} onRoot={setRoot} workspace={workspace} path={path} entries={entries} treeDirectories={treeDirectories} expandedDirectories={expandedDirectories} selected={selected} busy={busy} options={options} onOptions={setOptions} onOpen={() => void openSftp()} onClose={() => void closeSftp()} onApprove={() => void approveSftp()} onOpenPath={(value) => void loadDirectory(value)} onToggleDirectory={(value) => void toggleDirectory(value)} onSelect={setSelected} onRefresh={() => void loadDirectory(path)} onMutate={(value) => void mutateEntry(value)} onUpload={() => void upload()} onDownload={() => void download()} onEdit={() => void openEditor()} onArchive={() => void archiveSelected()} onZmodemUpload={() => void zmodemUpload()} onZmodemDownload={() => void zmodemDownload()} />}
         {tab === "transfers" && <TransferView transfers={transfers} onPause={async (id) => { await props.bridge.pauseTransfer(id); setTransfers(await props.bridge.listTransfers()); }} onCancel={async (id) => { await props.bridge.cancelTransfer(id); setTransfers(await props.bridge.listTransfers()); }} onRetry={async (id) => { const value = await props.bridge.retryTransfer(id, updateTransfer); setTransfers((current) => mergeTransfers(current, [value])); }} onClear={async () => { await props.bridge.clearFinishedTransfers(); setTransfers(await props.bridge.listTransfers()); }} />}
         {tab === "tunnels" && <TunnelView bridge={props.bridge} connections={sshConnections} defaultConnectionId={connectionId} tunnels={tunnels} onTunnels={setTunnels} onError={setError} onActivity={props.onActivity} />}
         {tab === "activity" && <div className="activity-list operations-activity">{props.activities.map((item) => <div key={item.id}><time>{item.time}</time><span>{item.message}</span></div>)}{props.activities.length === 0 && <div className="empty-list">暂无活动</div>}</div>}
       </div>
+      {editDocument && <div className="remote-editor-backdrop" role="dialog" aria-modal="true" aria-label="远程文本编辑器"><div className="remote-editor"><header><div><strong>{editDocument.path}</strong><small>{formatBytes(editDocument.bytes)} · SHA-256 冲突检测</small></div><button className="icon-button" type="button" aria-label="关闭远程编辑器" onClick={() => setEditDocument(null)}><X size={15} /></button></header><textarea aria-label="远程文件内容" value={editContent} onChange={(event) => setEditContent(event.target.value)} spellCheck={false} /><footer><label><input type="checkbox" checked={editDocument.utf8Bom} onChange={(event) => setEditDocument({ ...editDocument, utf8Bom: event.target.checked })} />保留 UTF-8 BOM</label><span>保存前将重新核对远端指纹</span><button className="primary-command" type="button" disabled={busy || editContent === editDocument.content} onClick={() => void saveEditor()}>安全保存</button></footer></div></div>}
     </section>
   );
 }
@@ -295,6 +339,10 @@ interface SftpViewProps {
   onMutate(value: "mkdir" | "rename" | "delete" | "chmod"): void;
   onUpload(): void;
   onDownload(): void;
+  onEdit(): void;
+  onArchive(): void;
+  onZmodemUpload(): void;
+  onZmodemDownload(): void;
 }
 
 function SftpView(props: SftpViewProps) {
@@ -323,6 +371,10 @@ function SftpView(props: SftpViewProps) {
       <button className="icon-button" type="button" aria-label="新建远程目录" title="新建目录" onClick={() => props.onMutate("mkdir")}><FolderPlus size={14} /></button>
       <button className="icon-button" type="button" aria-label="多文件上传" title="多文件上传" onClick={props.onUpload}><ArrowUpFromLine size={14} /></button>
       <button className="icon-button" type="button" aria-label="下载" title="下载" disabled={props.selected?.kind !== "file"} onClick={props.onDownload}><ArrowDownToLine size={14} /></button>
+      <button className="icon-button" type="button" aria-label="编辑远程文本" title="编辑文本（最大 2 MiB）" disabled={props.selected?.kind !== "file"} onClick={props.onEdit}><FilePenLine size={14} /></button>
+      <button className="icon-button" type="button" aria-label="创建远程压缩包" title="创建 .tar.gz" disabled={!props.selected || props.selected.kind === "symlink"} onClick={props.onArchive}><Archive size={14} /></button>
+      <button className="icon-button" type="button" aria-label="ZMODEM 上传" title="ZMODEM 上传" onClick={props.onZmodemUpload}><Radio size={14} /></button>
+      <button className="icon-button" type="button" aria-label="ZMODEM 下载" title="ZMODEM 下载" disabled={props.selected?.kind !== "file"} onClick={props.onZmodemDownload}><Radio size={14} /></button>
       <button className="icon-button" type="button" aria-label="重命名" title="重命名" disabled={!props.selected} onClick={() => props.onMutate("rename")}><FilePenLine size={14} /></button>
       <button className="icon-button" type="button" aria-label="修改权限" title="修改权限" disabled={!props.selected || props.selected.kind === "symlink"} onClick={() => props.onMutate("chmod")}><ShieldCheck size={14} /></button>
       <button className="icon-button danger" type="button" aria-label="删除" title="删除" disabled={!props.selected} onClick={() => props.onMutate("delete")}><Trash2 size={13} /></button>

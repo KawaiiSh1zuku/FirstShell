@@ -1,4 +1,4 @@
-import { StrictMode, Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { StrictMode, Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -38,11 +38,13 @@ import type {
   ProxyInput,
   ProxyProfile,
   QuickConnectInput,
+  ReadyTerminalSession,
   PublicError,
   SearchResult,
   Selection,
   TerminalProfile,
   TerminalProfileInput,
+  TerminalInsertRequest,
   VaultStatus,
   WorkspaceLayout,
   WorkspaceSnapshot,
@@ -52,6 +54,7 @@ import "./styles.css";
 
 const TerminalWorkspace = lazy(() => import("./TerminalWorkspace").then((module) => ({ default: module.TerminalWorkspace })));
 const OperationsWorkspace = lazy(() => import("./OperationsWorkspace").then((module) => ({ default: module.OperationsWorkspace })));
+const ToolsWorkspace = lazy(() => import("./ToolsWorkspace").then((module) => ({ default: module.ToolsWorkspace })));
 
 type EntityDialogState =
   | { kind: "folder"; value?: Folder }
@@ -165,9 +168,17 @@ function errorMessage(error: unknown): string {
 export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [themeMode, setThemeMode] = useThemeMode();
-  const [readySessions, setReadySessions] = useState(0);
+  const [readySessions, setReadySessions] = useState<ReadyTerminalSession[]>([]);
   const [readyConnectionIds, setReadyConnectionIds] = useState<string[]>([]);
+  const [rightMode, setRightMode] = useState<"details" | "tools">("details");
+  const [toolsMounted, setToolsMounted] = useState(false);
+  const [insertRequest, setInsertRequest] = useState<TerminalInsertRequest | null>(null);
+  const insertSequenceRef = useRef(0);
   const addActivity = useCallback((message: string) => dispatch({ type: "activity", message }), []);
+  const showTools = useCallback(() => {
+    setToolsMounted(true);
+    setRightMode("tools");
+  }, []);
   const configureProxyCredential = useCallback(
     (value: ProxyProfile) => bridge.configureProxyCredential(value.id),
     [bridge],
@@ -474,7 +485,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         <label className="search-box"><Search size={15} aria-hidden="true" /><input aria-label="搜索工作区" placeholder="搜索" value={state.query} onChange={(event) => dispatch({ type: "patch", value: { query: event.target.value } })} /></label>
         <div className="connection-tree" role="tree" aria-label="连接树">
           {state.query.trim() ? state.searchResults.map((result) => (
-            <button className="tree-row search-result" type="button" key={`${result.kind}-${result.id}`} onClick={() => result.kind === "connection" ? openConnection(result.id) : dispatch({ type: "patch", value: { selection: { kind: "folder", id: result.id } } })}>
+            <button className="tree-row search-result" type="button" key={`${result.kind}-${result.id}`} onClick={() => result.kind === "connection" ? openConnection(result.id) : result.kind === "folder" ? dispatch({ type: "patch", value: { selection: { kind: "folder", id: result.id } } }) : result.kind === "snippet" ? showTools() : undefined}>
               {result.kind === "folder" ? <FolderIcon size={15} /> : <Server size={15} />}<span><strong>{result.label}</strong><small>{result.detail}</small></span>
             </button>
           )) : (
@@ -495,7 +506,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
             })}
             {state.openTabs.length === 0 && <div className="tab-placeholder">工作区</div>}
           </div>
-          {state.openTabs.length > 0 ? <Suspense fallback={<div className="terminal-loading">正在加载终端</div>}><TerminalWorkspace bridge={bridge} connections={state.openTabs.map((id) => allConnections.find((value) => value.id === id)).filter((value): value is ConnectionProfile => Boolean(value))} activeConnectionId={activeConnection?.id ?? null} profiles={snapshot.terminalProfiles} onActivity={addActivity} onReadyCountChange={setReadySessions} onReadyConnectionsChange={setReadyConnectionIds} /></Suspense> : <WorkspaceOverview snapshot={snapshot} />}
+          {state.openTabs.length > 0 ? <Suspense fallback={<div className="terminal-loading">正在加载终端</div>}><TerminalWorkspace bridge={bridge} connections={state.openTabs.map((id) => allConnections.find((value) => value.id === id)).filter((value): value is ConnectionProfile => Boolean(value))} activeConnectionId={activeConnection?.id ?? null} profiles={snapshot.terminalProfiles} onActivity={addActivity} onReadySessionsChange={setReadySessions} onReadyConnectionsChange={setReadyConnectionIds} insertRequest={insertRequest} /></Suspense> : <WorkspaceOverview snapshot={snapshot} />}
         </div>
         {state.layout.bottomOpen && <PanelSeparator orientation="horizontal" label="调整活动面板高度" onPointerDown={(event) => beginResize("bottom", event)} onNudge={(delta) => nudgeLayout("bottom", delta)} />}
         <Suspense fallback={state.layout.bottomOpen ? <section className="activity-panel"><div className="empty-list">正在加载文件与网络工具</div></section> : null}><OperationsWorkspace bridge={bridge} connections={snapshot.connections} activeConnectionId={activeConnection?.id ?? null} readyConnectionIds={readyConnectionIds} hidden={!state.layout.bottomOpen} activities={state.activities} onActivity={addActivity} onCollapse={() => void saveLayout({ ...state.layout, bottomOpen: false })} /></Suspense>
@@ -504,16 +515,17 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
       <PanelSeparator orientation="vertical" label="调整详情面板宽度" onPointerDown={(event) => beginResize("right", event)} onNudge={(delta) => nudgeLayout("right", -delta)} />
 
       <aside className="inspector-panel" aria-label="详情">
-        <div className="panel-header"><span>详情</span>{(selectedFolder || selectedConnection) && <div><button className="icon-button" type="button" aria-label="编辑所选项目" title="编辑" onClick={() => dispatch({ type: "patch", value: { entityDialog: selectedFolder ? { kind: "folder", value: selectedFolder } : { kind: "connection", value: selectedConnection }, error: null } })}><Edit3 size={15} /></button><button className="icon-button danger" type="button" aria-label="删除所选项目" title="删除" onClick={() => void deleteSelected()}><Trash2 size={15} /></button></div>}</div>
-        <Inspector folder={selectedFolder} connection={selectedConnection} snapshot={snapshot} />
+        <div className="panel-header tools-panel-header"><div className="panel-mode"><button type="button" aria-current={rightMode === "details"} onClick={() => setRightMode("details")}>详情</button><button type="button" aria-current={rightMode === "tools"} onClick={showTools}>工具</button></div>{rightMode === "details" && (selectedFolder || selectedConnection) && <div><button className="icon-button" type="button" aria-label="编辑所选项目" title="编辑" onClick={() => dispatch({ type: "patch", value: { entityDialog: selectedFolder ? { kind: "folder", value: selectedFolder } : { kind: "connection", value: selectedConnection }, error: null } })}><Edit3 size={15} /></button><button className="icon-button danger" type="button" aria-label="删除所选项目" title="删除" onClick={() => void deleteSelected()}><Trash2 size={15} /></button></div>}</div>
+        {rightMode === "details" && <Inspector folder={selectedFolder} connection={selectedConnection} snapshot={snapshot} />}
+        {toolsMounted && <div className="tools-workspace-shell" hidden={rightMode !== "tools"}><Suspense fallback={<div className="empty-list">正在加载效率工具</div>}><ToolsWorkspace bridge={bridge} connections={snapshot.connections} snippets={snapshot.snippets} activeConnectionId={activeConnection?.temporary ? null : activeConnection?.id ?? null} readySessions={readySessions} onInsert={(connectionId, text) => { const openTabs = state.openTabs.includes(connectionId) ? state.openTabs : [...state.openTabs, connectionId]; dispatch({ type: "patch", value: { openTabs, activeTab: connectionId, selection: { kind: "connection", id: connectionId } } }); insertSequenceRef.current += 1; setInsertRequest({ sequence: insertSequenceRef.current, connectionId, text }); }} onRefresh={async () => { await refresh(); }} onActivity={addActivity} /></Suspense></div>}
       </aside>
 
       <footer className="statusbar">
-        <span><Circle size={7} fill="currentColor" />{readySessions > 0 ? `${readySessions} 个活动终端` : "未连接"}</span>
+        <span><Circle size={7} fill="currentColor" />{readySessions.length > 0 ? `${readySessions.length} 个活动终端` : "未连接"}</span>
         <span>{snapshot.connections.length} 个连接</span>
         {!state.layout.bottomOpen && <button type="button" onClick={() => void saveLayout({ ...state.layout, bottomOpen: true })}><Activity size={13} />活动</button>}
         {state.undoDelete && <button type="button" aria-label={`撤销删除 ${state.undoDelete.label}`} onClick={() => void undoDelete()}><Undo2 size={13} />撤销删除</button>}
-        <span>M3</span>
+        <span>M4</span>
       </footer>
 
       {state.entityDialog && <EntityDialog dialog={state.entityDialog} snapshot={snapshot} busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { entityDialog: null, error: null } })} onSaveFolder={saveFolder} onSaveConnection={saveConnection} />}

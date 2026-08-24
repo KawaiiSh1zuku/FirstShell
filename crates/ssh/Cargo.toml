@@ -19,6 +19,7 @@ tokio.workspace = true
 tokio-util.workspace = true
 url.workspace = true
 zeroize.workspace = true
+zmodem2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

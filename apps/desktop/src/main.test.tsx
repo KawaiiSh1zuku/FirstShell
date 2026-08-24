@@ -6,11 +6,22 @@ import { App } from "./main";
 import type { VaultStatus } from "./types";
 
 vi.mock("./TerminalWorkspace", () => ({
-  TerminalWorkspace: () => <div data-testid="terminal-workspace" />,
+  TerminalWorkspace: ({ insertRequest }: { insertRequest?: { sequence: number } | null }) => <div data-testid="terminal-workspace"><span data-testid="insert-sequence">{insertRequest?.sequence ?? "none"}</span></div>,
 }));
+
+vi.mock("./ToolsWorkspace", async () => {
+  const React = await import("react");
+  return {
+    ToolsWorkspace: ({ connections, onInsert }: { connections: Array<{ id: string }>; onInsert(connectionId: string, text: string): void }) => {
+      const [localState, setLocalState] = React.useState(0);
+      return <div data-testid="tools-workspace-mock"><span data-testid="tool-local-state">{localState}</span><button type="button" onClick={() => setLocalState((value) => value + 1)}>推进工具状态</button><button type="button" onClick={() => onInsert(connections[0].id, "echo repeated")}>测试插入</button></div>;
+    },
+  };
+});
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   window.localStorage.clear();
   delete document.documentElement.dataset.theme;
   delete document.documentElement.dataset.resolvedTheme;
@@ -170,5 +181,36 @@ describe("M1 workspace accessibility and vault state", () => {
     await user.click(screen.getByRole("button", { name: "连接" }));
     expect(await screen.findByRole("tab", { name: /temporary\.example/ })).toBeTruthy();
     expect(screen.queryByRole("treeitem", { name: /temporary\.example/ })).toBeNull();
+  });
+
+  it("keeps the efficiency workspace mounted while showing connection details", async () => {
+    const bridge = createPreviewBridge();
+    const user = userEvent.setup();
+    render(<App bridge={bridge} />);
+    await screen.findByText("Edge Gateway");
+
+    await user.click(screen.getByRole("button", { name: "工具" }));
+    await user.click(await screen.findByRole("button", { name: "推进工具状态" }));
+    expect(screen.getByTestId("tool-local-state").textContent).toBe("1");
+
+    await user.click(screen.getByRole("button", { name: "详情" }));
+    expect(screen.getByTestId("tools-workspace-mock").closest("[hidden]")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "工具" }));
+    expect(screen.getByTestId("tool-local-state").textContent).toBe("1");
+  });
+
+  it("uses a monotonic sequence for repeated insert requests in the same millisecond", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const bridge = createPreviewBridge();
+    const user = userEvent.setup();
+    render(<App bridge={bridge} />);
+    await screen.findByText("Edge Gateway");
+
+    await user.click(screen.getByRole("button", { name: "工具" }));
+    const insert = await screen.findByRole("button", { name: "测试插入" });
+    await user.click(insert);
+    expect((await screen.findByTestId("insert-sequence")).textContent).toBe("1");
+    await user.click(insert);
+    expect(screen.getByTestId("insert-sequence").textContent).toBe("2");
   });
 });

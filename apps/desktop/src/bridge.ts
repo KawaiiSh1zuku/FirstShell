@@ -1,6 +1,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  ArchiveReceipt,
+  CommandHistoryEntry,
   ConnectionInput,
   ConnectionProfile,
   DesktopTunnelSnapshot,
@@ -8,9 +10,14 @@ import type {
   Folder,
   FolderInput,
   ImportSummary,
+  MonitorEvent,
+  MonitorSnapshot,
+  ProbeKind,
+  ProbeResult,
   ProxyInput,
   ProxyProfile,
   RemoteEntry,
+  RemoteEditDocument,
   RestoreReceipt,
   DesktopSessionEvent,
   HostKeyEvidence,
@@ -20,6 +27,8 @@ import type {
   TerminalProfileInput,
   SessionLogReceipt,
   SessionSnapshot,
+  Snippet,
+  SnippetInput,
   TerminalSize,
   TransferOptions,
   TransferSnapshot,
@@ -52,6 +61,13 @@ export interface WorkspaceBridge {
   createTerminal(input: TerminalProfileInput): Promise<TerminalProfile>;
   updateTerminal(id: string, revision: number, input: TerminalProfileInput): Promise<TerminalProfile>;
   deleteTerminal(id: string, revision: number): Promise<void>;
+  createSnippet(input: SnippetInput): Promise<Snippet>;
+  updateSnippet(id: string, revision: number, input: SnippetInput): Promise<Snippet>;
+  deleteSnippet(id: string, revision: number): Promise<void>;
+  renderSnippet(id: string, values: Record<string, string>): Promise<string>;
+  recordCommand(connectionId: string, command: string): Promise<CommandHistoryEntry>;
+  commandHistory(connectionId: string | null, limit: number): Promise<CommandHistoryEntry[]>;
+  clearCommandHistory(): Promise<void>;
   search(query: string): Promise<SearchResult[]>;
   loadLayout(): Promise<WorkspaceLayout>;
   saveLayout(layout: WorkspaceLayout): Promise<void>;
@@ -67,6 +83,8 @@ export interface WorkspaceBridge {
   openQuickTerminal(input: QuickConnectInput, size: TerminalSize, onEvent: (value: DesktopSessionEvent) => void): Promise<SessionSnapshot>;
   listTerminals(): Promise<SessionSnapshot[]>;
   sendTerminalInput(sessionId: string, data: number[]): Promise<void>;
+  broadcastTerminal(sessionIds: string[], command: string, confirmed: boolean): Promise<void>;
+  stopBroadcast(sessionIds: string[]): Promise<void>;
   resizeTerminal(sessionId: string, size: TerminalSize): Promise<void>;
   reconnectTerminal(sessionId: string): Promise<void>;
   closeTerminal(sessionId: string): Promise<void>;
@@ -82,10 +100,15 @@ export interface WorkspaceBridge {
   renameSftpEntry(workspaceId: string, path: string, name: string): Promise<string>;
   deleteSftpEntry(workspaceId: string, path: string): Promise<void>;
   chmodSftpEntry(workspaceId: string, path: string, mode: number): Promise<void>;
+  openRemoteText(workspaceId: string, path: string): Promise<RemoteEditDocument>;
+  saveRemoteText(workspaceId: string, path: string, expectedFingerprint: string, content: string, utf8Bom: boolean): Promise<RemoteEditDocument>;
+  createRemoteArchive(workspaceId: string, sources: string[], destination: string): Promise<ArchiveReceipt>;
   chooseSftpUploads(workspaceId: string, remoteDirectory: string, options: TransferOptions, onEvent: (value: TransferSnapshot) => void): Promise<TransferSnapshot[]>;
   onSftpUploadDrop(callback: (value: StagedUploadDrop) => void): Promise<() => void>;
   queueSftpDrop(workspaceId: string, batchId: string, remoteDirectory: string, options: TransferOptions, onEvent: (value: TransferSnapshot) => void): Promise<TransferSnapshot[]>;
   chooseSftpDownload(workspaceId: string, remotePath: string, options: TransferOptions, onEvent: (value: TransferSnapshot) => void): Promise<TransferSnapshot | null>;
+  chooseZmodemUpload(workspaceId: string, remoteDirectory: string, onEvent: (value: TransferSnapshot) => void): Promise<TransferSnapshot | null>;
+  chooseZmodemDownload(workspaceId: string, remotePath: string, onEvent: (value: TransferSnapshot) => void): Promise<TransferSnapshot | null>;
   listTransfers(): Promise<TransferSnapshot[]>;
   pauseTransfer(transferId: string): Promise<void>;
   cancelTransfer(transferId: string): Promise<void>;
@@ -95,6 +118,11 @@ export interface WorkspaceBridge {
   approveTunnelHostKey(tunnelId: string, fingerprint: string, previousFingerprint: string | null): Promise<DesktopTunnelSnapshot>;
   listTunnels(): Promise<DesktopTunnelSnapshot[]>;
   closeTunnel(tunnelId: string): Promise<void>;
+  startHostMonitor(connectionId: string, intervalSeconds: number, onEvent: (value: MonitorEvent) => void): Promise<MonitorSnapshot>;
+  approveMonitorHostKey(monitorId: string, fingerprint: string, previousFingerprint: string | null): Promise<MonitorSnapshot>;
+  monitorHistory(monitorId: string, maxPoints: number): Promise<ProbeResult[]>;
+  runHostProbe(connectionId: string, probe: ProbeKind): Promise<ProbeResult>;
+  stopHostMonitor(monitorId: string): Promise<void>;
 }
 
 const tauriBridge: WorkspaceBridge = {
@@ -125,6 +153,13 @@ const tauriBridge: WorkspaceBridge = {
     invoke("update_terminal_profile", { id, expectedRevision, input }),
   deleteTerminal: (id, expectedRevision) =>
     invoke("delete_terminal_profile", { id, expectedRevision }),
+  createSnippet: (input) => invoke("create_snippet", { input }),
+  updateSnippet: (id, expectedRevision, input) => invoke("update_snippet", { id, expectedRevision, input }),
+  deleteSnippet: (id, expectedRevision) => invoke("delete_snippet", { id, expectedRevision }),
+  renderSnippet: (id, values) => invoke("render_snippet", { id, values }),
+  recordCommand: (connectionId, command) => invoke("record_command_history", { connectionId, command }),
+  commandHistory: (connectionId, limit) => invoke("list_command_history", { connectionId, limit }),
+  clearCommandHistory: () => invoke("clear_command_history"),
   search: (query) => invoke("search_workspace", { query, limit: 50 }),
   loadLayout: () => invoke("load_workspace_layout"),
   saveLayout: (layout) => invoke("save_workspace_layout", { layout }),
@@ -150,6 +185,8 @@ const tauriBridge: WorkspaceBridge = {
   },
   listTerminals: () => invoke("list_terminal_sessions"),
   sendTerminalInput: (sessionId, data) => invoke("send_terminal_input", { sessionId, data }),
+  broadcastTerminal: (sessionIds, command, confirmed) => invoke("broadcast_terminal_command", { sessionIds, command, confirmed }),
+  stopBroadcast: (sessionIds) => invoke("stop_terminal_broadcast", { sessionIds }),
   resizeTerminal: (sessionId, size) => invoke("resize_terminal", { sessionId, size }),
   reconnectTerminal: (sessionId) => invoke("reconnect_terminal", { sessionId }),
   closeTerminal: (sessionId) => invoke("close_terminal", { sessionId }),
@@ -166,6 +203,9 @@ const tauriBridge: WorkspaceBridge = {
   renameSftpEntry: (workspaceId, path, name) => invoke("rename_sftp_entry", { workspaceId, path, name }),
   deleteSftpEntry: (workspaceId, path) => invoke("delete_sftp_entry", { workspaceId, path }),
   chmodSftpEntry: (workspaceId, path, mode) => invoke("chmod_sftp_entry", { workspaceId, path, mode }),
+  openRemoteText: (workspaceId, path) => invoke("open_remote_text", { workspaceId, path }),
+  saveRemoteText: (workspaceId, path, expectedFingerprint, content, utf8Bom) => invoke("save_remote_text", { workspaceId, path, expectedFingerprint, content, utf8Bom }),
+  createRemoteArchive: (workspaceId, sources, destination) => invoke("create_remote_archive", { workspaceId, sources, destination }),
   chooseSftpUploads: (workspaceId, remoteDirectory, options, onEvent) => {
     const channel = new Channel<TransferSnapshot>();
     channel.onmessage = onEvent;
@@ -182,6 +222,16 @@ const tauriBridge: WorkspaceBridge = {
     channel.onmessage = onEvent;
     return invoke("choose_sftp_download", { workspaceId, remotePath, options, onEvent: channel });
   },
+  chooseZmodemUpload: (workspaceId, remoteDirectory, onEvent) => {
+    const channel = new Channel<TransferSnapshot>();
+    channel.onmessage = onEvent;
+    return invoke("choose_zmodem_upload", { workspaceId, remoteDirectory, onEvent: channel });
+  },
+  chooseZmodemDownload: (workspaceId, remotePath, onEvent) => {
+    const channel = new Channel<TransferSnapshot>();
+    channel.onmessage = onEvent;
+    return invoke("choose_zmodem_download", { workspaceId, remotePath, onEvent: channel });
+  },
   listTransfers: () => invoke("list_transfers"),
   pauseTransfer: (transferId) => invoke("pause_transfer", { transferId }),
   cancelTransfer: (transferId) => invoke("cancel_transfer", { transferId }),
@@ -195,6 +245,15 @@ const tauriBridge: WorkspaceBridge = {
   approveTunnelHostKey: (tunnelId, fingerprint, previousFingerprint) => invoke("approve_tunnel_host_key", { tunnelId, fingerprint, previousFingerprint }),
   listTunnels: () => invoke("list_tunnels"),
   closeTunnel: (tunnelId) => invoke("close_tunnel", { tunnelId }),
+  startHostMonitor: (connectionId, intervalSeconds, onEvent) => {
+    const channel = new Channel<MonitorEvent>();
+    channel.onmessage = onEvent;
+    return invoke("start_host_monitor", { connectionId, intervalSeconds, onEvent: channel });
+  },
+  approveMonitorHostKey: (monitorId, fingerprint, previousFingerprint) => invoke("approve_monitor_host_key", { monitorId, fingerprint, previousFingerprint }),
+  monitorHistory: (monitorId, maxPoints) => invoke("monitor_history", { monitorId, maxPoints }),
+  runHostProbe: (connectionId, probe) => invoke("run_host_probe", { connectionId, probe }),
+  stopHostMonitor: (monitorId) => invoke("stop_host_monitor", { monitorId }),
 };
 
 const previewSnapshot: WorkspaceSnapshot = {
@@ -279,6 +338,19 @@ const previewSnapshot: WorkspaceSnapshot = {
       keymap: "xterm",
     },
   ],
+  snippets: [
+    {
+      id: "snippet-preview",
+      revision: 1,
+      name: "查看服务日志",
+      tags: ["systemd", "日志"],
+      template: "journalctl -u {{service}} -n {{lines}}",
+      parameters: [
+        { name: "service", label: "服务", kind: "text", required: true, defaultValue: "nginx", choices: [] },
+        { name: "lines", label: "行数", kind: "integer", required: true, defaultValue: "100", choices: [] },
+      ],
+    },
+  ],
 };
 
 export function createPreviewBridge(): WorkspaceBridge {
@@ -295,6 +367,8 @@ export function createPreviewBridge(): WorkspaceBridge {
   const sessions = new Map<string, SessionSnapshot>();
   let transfers: TransferSnapshot[] = [];
   let tunnels: DesktopTunnelSnapshot[] = [];
+  let history: CommandHistoryEntry[] = [];
+  const monitors = new Map<string, ProbeResult[]>();
   const nextId = (prefix: string) => `${prefix}-preview-${sequence++}`;
   const updateSnapshot = <T>(operation: () => T) => Promise.resolve(operation());
 
@@ -401,6 +475,32 @@ export function createPreviewBridge(): WorkspaceBridge {
       updateSnapshot(() => {
         snapshot.terminalProfiles = snapshot.terminalProfiles.filter((value) => value.id !== id);
       }),
+    createSnippet: (input) => updateSnapshot(() => {
+      const value = { id: nextId("snippet"), revision: 1, ...input };
+      snapshot.snippets.push(value);
+      return value;
+    }),
+    updateSnippet: (id, revision, input) => updateSnapshot(() => {
+      const index = snapshot.snippets.findIndex((value) => value.id === id);
+      const value = { id, revision: revision + 1, ...input };
+      snapshot.snippets[index] = value;
+      return value;
+    }),
+    deleteSnippet: (id) => updateSnapshot(() => {
+      snapshot.snippets = snapshot.snippets.filter((value) => value.id !== id);
+    }),
+    renderSnippet: async (id, values) => {
+      const snippet = snapshot.snippets.find((value) => value.id === id);
+      if (!snippet) throw new Error("snippet not found");
+      return snippet.parameters.reduce((text, parameter) => text.replaceAll(`{{${parameter.name}}}`, values[parameter.name] ?? parameter.defaultValue), snippet.template);
+    },
+    recordCommand: async (connectionId, command) => {
+      const value = { connectionId, command, path: command.startsWith("cd ") ? command.slice(3).trim() : null, recordedAtMs: Date.now() };
+      history = [...history.filter((item) => item.connectionId !== connectionId || item.command !== command), value].slice(-500);
+      return value;
+    },
+    commandHistory: async (connectionId, limit) => history.filter((value) => !connectionId || value.connectionId === connectionId).slice(-limit).reverse(),
+    clearCommandHistory: async () => { history = []; },
     search: async (query) => {
       const normalized = query.toLowerCase();
       return snapshot.connections
@@ -412,9 +512,9 @@ export function createPreviewBridge(): WorkspaceBridge {
       layout = value;
     },
     exportWorkspace: async () => ({ fileName: "preview.firstshell-backup", bytes: 4096 }),
-    validateImport: async () => ({ folders: 2, connections: 3, proxies: 0, terminalProfiles: 1 }),
+    validateImport: async () => ({ folders: 2, connections: 3, proxies: 0, terminalProfiles: 1, snippets: 1 }),
     restoreImport: async () => ({
-      imported: { folders: 2, connections: 3, proxies: 0, terminalProfiles: 1 },
+      imported: { folders: 2, connections: 3, proxies: 0, terminalProfiles: 1, snippets: 1 },
       recoveryFileName: "before-import-preview.db",
     }),
     onVaultLocked: async () => () => undefined,
@@ -438,6 +538,12 @@ export function createPreviewBridge(): WorkspaceBridge {
     sendTerminalInput: async (sessionId, data) => {
       if (!sessions.has(sessionId)) throw new Error("session not found");
       void data;
+    },
+    broadcastTerminal: async (sessionIds) => {
+      if (sessionIds.some((id) => !sessions.has(id))) throw new Error("session not found");
+    },
+    stopBroadcast: async (sessionIds) => {
+      if (sessionIds.some((id) => !sessions.has(id))) throw new Error("session not found");
     },
     resizeTerminal: async (sessionId, size) => {
       const value = sessions.get(sessionId);
@@ -463,10 +569,15 @@ export function createPreviewBridge(): WorkspaceBridge {
     renameSftpEntry: async (_workspaceId, _path, name) => name,
     deleteSftpEntry: async () => undefined,
     chmodSftpEntry: async () => undefined,
+    openRemoteText: async (_workspaceId, path) => ({ path, content: "Preview remote file\n", fingerprint: "preview-fingerprint", utf8Bom: false, bytes: 20 }),
+    saveRemoteText: async (_workspaceId, path, _fingerprint, content, utf8Bom) => ({ path, content, fingerprint: `preview-${content.length}`, utf8Bom, bytes: new TextEncoder().encode(content).length }),
+    createRemoteArchive: async (_workspaceId, _sources, destination) => ({ path: destination, bytes: 2048 }),
     chooseSftpUploads: async () => [],
     onSftpUploadDrop: async () => () => undefined,
     queueSftpDrop: async () => [],
     chooseSftpDownload: async () => null,
+    chooseZmodemUpload: async () => null,
+    chooseZmodemDownload: async () => null,
     listTransfers: async () => transfers,
     pauseTransfer: async (transferId) => { transfers = transfers.map((value) => value.id === transferId ? { ...value, status: "paused" } : value); },
     cancelTransfer: async (transferId) => { transfers = transfers.map((value) => value.id === transferId ? { ...value, status: "cancelled" } : value); },
@@ -491,6 +602,17 @@ export function createPreviewBridge(): WorkspaceBridge {
     },
     listTunnels: async () => tunnels,
     closeTunnel: async (tunnelId) => { tunnels = tunnels.filter((value) => value.id !== tunnelId); },
+    startHostMonitor: async (connectionId, intervalSeconds, onEvent) => {
+      const id = nextId("monitor");
+      const sample: ProbeResult = { version: 1, probe: { type: "host_metrics" }, capturedAtMs: Date.now(), exitCode: 0, metrics: [{ key: "load_1m", value: 0.42, unit: "ratio" }, { key: "memory_used", value: 48, unit: "percent" }], rows: [], diagnostic: null };
+      monitors.set(id, [sample]);
+      queueMicrotask(() => onEvent({ monitorId: id, state: "running", sample, diagnostic: null }));
+      return { id, connectionId, intervalSeconds, state: "running", sampleCount: 1, diagnostic: null, hostKey: null };
+    },
+    approveMonitorHostKey: async (monitorId) => ({ id: monitorId, connectionId: "connection-edge", intervalSeconds: 5, state: "running", sampleCount: 0, diagnostic: null, hostKey: null }),
+    monitorHistory: async (monitorId, maxPoints) => (monitors.get(monitorId) ?? []).slice(-maxPoints),
+    runHostProbe: async (_connectionId, probe) => ({ version: 1, probe, capturedAtMs: Date.now(), exitCode: 0, metrics: probe.type === "host_metrics" ? [{ key: "cpu_used", value: 24, unit: "percent" }] : [], rows: probe.type === "processes" ? [{ kind: "process", cells: ["1234", "nginx", "1.2", "0.8"] }] : [{ kind: probe.type, cells: ["preview", "ok"] }], diagnostic: null }),
+    stopHostMonitor: async (monitorId) => { monitors.delete(monitorId); },
   };
 }
 

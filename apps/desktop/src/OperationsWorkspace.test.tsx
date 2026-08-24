@@ -179,4 +179,33 @@ describe("M3 operations workspace", () => {
     expect(bridge.retryTransfer).toHaveBeenCalledWith("transfer-pause", expect.any(Function));
     expect(await screen.findByText(/已完成/)).toBeTruthy();
   });
+
+  it("edits with a conflict fingerprint and exposes controlled archive and ZMODEM actions", async () => {
+    const bridge = createPreviewBridge();
+    const openText = vi.spyOn(bridge, "openRemoteText");
+    const saveText = vi.spyOn(bridge, "saveRemoteText");
+    const archive = vi.spyOn(bridge, "createRemoteArchive");
+    const zmodemUpload = vi.spyOn(bridge, "chooseZmodemUpload");
+    vi.spyOn(window, "prompt").mockReturnValue("README.tar.gz");
+    const user = userEvent.setup();
+    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} readyConnectionIds={[]} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
+
+    await user.click(screen.getByRole("button", { name: "连接 SFTP" }));
+    const readme = await screen.findByRole("row", { name: /README\.txt/ });
+    await user.click(readme);
+    await user.click(screen.getByRole("button", { name: "编辑远程文本" }));
+    const editor = await screen.findByRole("textbox", { name: "远程文件内容" });
+    await user.clear(editor);
+    await user.type(editor, "updated remotely");
+    await user.click(screen.getByRole("button", { name: "安全保存" }));
+    expect(openText).toHaveBeenCalledWith(expect.any(String), "README.txt");
+    expect(saveText).toHaveBeenCalledWith(expect.any(String), "README.txt", "preview-fingerprint", "updated remotely", false);
+    await user.click(screen.getByRole("button", { name: "关闭远程编辑器" }));
+
+    await user.click(await screen.findByRole("row", { name: /README\.txt/ }));
+    await user.click(screen.getByRole("button", { name: "创建远程压缩包" }));
+    expect(archive).toHaveBeenCalledWith(expect.any(String), ["README.txt"], "README.tar.gz");
+    await user.click(screen.getByRole("button", { name: "ZMODEM 上传" }));
+    expect(zmodemUpload).toHaveBeenCalledWith(expect.any(String), "", expect.any(Function));
+  });
 });

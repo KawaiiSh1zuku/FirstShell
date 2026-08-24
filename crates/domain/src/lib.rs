@@ -45,6 +45,10 @@ entity_id!(ConnectionId, "Stable identifier for a connection profile.");
 entity_id!(FolderId, "Stable identifier for a connection folder.");
 entity_id!(ProxyId, "Stable identifier for a proxy profile.");
 entity_id!(
+    SnippetId,
+    "Stable identifier for an encrypted command snippet."
+);
+entity_id!(
     TerminalProfileId,
     "Stable identifier for a terminal profile."
 );
@@ -394,6 +398,86 @@ pub struct TerminalProfileInput {
     pub keymap: TerminalKeymap,
 }
 
+/// Type applied to one command-snippet parameter before terminal insertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SnippetParameterKind {
+    /// Bounded single-line free text.
+    Text,
+    /// Signed base-ten integer.
+    Integer,
+    /// Value selected from the declared choices.
+    Choice,
+    /// Hostname or IP address without shell metacharacters.
+    Host,
+    /// Bounded path text without control characters.
+    Path,
+}
+
+/// Typed variable declared by an encrypted command snippet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnippetParameter {
+    /// ASCII identifier referenced as `{{name}}` in the template.
+    pub name: String,
+    /// User-visible prompt label.
+    pub label: String,
+    /// Validation rule applied in Rust before rendering.
+    pub kind: SnippetParameterKind,
+    /// Whether an empty value is rejected.
+    pub required: bool,
+    /// Optional bounded default.
+    pub default_value: String,
+    /// Allowed values for choice parameters.
+    pub choices: Vec<String>,
+}
+
+/// Decrypted encrypted command snippet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snippet {
+    /// Stable record identifier.
+    pub id: SnippetId,
+    /// Monotonic optimistic-concurrency revision.
+    pub revision: u64,
+    /// User-visible name.
+    pub name: String,
+    /// Searchable private tags.
+    pub tags: Vec<String>,
+    /// Single-line terminal template with typed placeholders.
+    pub template: String,
+    /// Typed parameters referenced by the template.
+    pub parameters: Vec<SnippetParameter>,
+}
+
+/// Input used to create or update an encrypted command snippet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnippetInput {
+    /// User-visible name.
+    pub name: String,
+    /// Searchable private tags.
+    pub tags: Vec<String>,
+    /// Single-line terminal template with typed placeholders.
+    pub template: String,
+    /// Typed parameters referenced by the template.
+    pub parameters: Vec<SnippetParameter>,
+}
+
+/// One encrypted command-history item scoped to a persisted connection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandHistoryEntry {
+    /// Connection that received the command.
+    pub connection_id: ConnectionId,
+    /// Bounded command text without terminal controls.
+    pub command: String,
+    /// Optional path inferred from a simple `cd` command.
+    pub path: Option<String>,
+    /// Local observation time in Unix milliseconds.
+    pub recorded_at_ms: u64,
+}
+
 /// Decrypted entities sent to the workspace after unlock.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -406,6 +490,9 @@ pub struct WorkspaceSnapshot {
     pub proxies: Vec<ProxyProfile>,
     /// Visible terminal profiles.
     pub terminal_profiles: Vec<TerminalProfile>,
+    /// Encrypted command snippets available while unlocked.
+    #[serde(default)]
+    pub snippets: Vec<Snippet>,
 }
 
 /// Persisted workspace panel geometry with bounded logical-pixel values.
@@ -445,6 +532,8 @@ pub enum SearchResultKind {
     Proxy,
     /// Terminal profile match.
     TerminalProfile,
+    /// Encrypted command snippet match.
+    Snippet,
 }
 
 /// One bounded in-memory search result.

@@ -14,7 +14,7 @@
 | Deferred | 明确延后，不阻塞当前发布目标 |
 | Excluded | 不属于项目范围或存在不可接受风险 |
 
-M1 基础工作区、M2 SSH 终端和 M3 SFTP/复杂网络能力已通过验收；M4 及后续产品能力仍为 `Planned`。M1 安装后人工交互仍按项目决定在 M4 结束后统一执行；M2、M3 已完成浏览器自动化与双视口视觉基线，详见 [M1](./verification/m1.md)、[M2](./verification/m2.md) 和 [M3 验收记录](./verification/m3.md)。
+M1 基础工作区、M2 SSH 终端、M3 SFTP/复杂网络和 M4 主机监控/效率工具已通过各自的实现与自动化验收，详见 [M1](./verification/m1.md)、[M2](./verification/m2.md)、[M3](./verification/m3.md) 和 [M4 验收记录](./verification/m4.md)。项目负责人于 2026-08-24 决定跳过本轮安装后人工流程、真实远端与 lrzsz 互操作，将其作为未通过的延期项移入 M7；`Verified` 不表示这些人工项已经执行。
 
 ## 基础工作区
 
@@ -39,8 +39,8 @@ M1 基础工作区、M2 SSH 终端和 M3 SFTP/复杂网络能力已通过验收�
 | 终端主题、字体、编码与键位 | M2/M3 补充 | Verified | 多预设、加密自定义 ANSI palette、实时预览、字体回退和 CJK 输入可验证 |
 | 本地终端 | M2 | Verified | 平台 shell 白名单和受控环境继承 |
 | 会话日志 | M2 | Verified | 默认关闭、应用目录和 7 天保留策略 |
-| 命令历史与补全 | M4 | Planned | 加密、可清除、补全不自动执行 |
-| 命令广播 | M4 | Planned | 目标会话可见、逐次确认、紧急停止 |
+| 命令历史与补全 | M4 | Verified | 加密、500 项上限、可清除、补全只插入不执行 |
+| 命令广播 | M4 | Verified | 16 个目标上限、逐次确认、原子校验、Ctrl-C 紧急停止 |
 
 ## SFTP、代理与隧道
 
@@ -52,9 +52,9 @@ M1 基础工作区、M2 SSH 终端和 M3 SFTP/复杂网络能力已通过验收�
 | 覆盖、续传与冲突策略 | M3 | Verified | 远端变化检测；新目标同目录 rename，既有目标记录替换窗口 |
 | 拖放与多文件队列 | M3 | Verified | 路径规范化、批量错误清晰 |
 | 权限、重命名、删除与新建 | M3 | Verified | 危险操作确认、符号链接策略 |
-| 在线远程编辑 | M4 | Planned | 版本指纹、保存冲突和编码检测 |
-| 压缩打包传输 | M4 | Planned | 受控命令模板、临时目录清理 |
-| ZMODEM | M4 | Planned | 采用成熟实现并完成许可证审查 |
+| 在线远程编辑 | M4 | Verified | 2 MiB UTF-8、双重版本指纹、保存冲突和 symlink 拒绝 |
+| 压缩打包传输 | M4 | Verified | rooted source、固定 tar 模板、shell quoting 与超时上限 |
+| ZMODEM | M4 | Verified | `zmodem2` 状态机、受控队列与内存往返通过；真实 lrzsz 互操作延期 M7 |
 | Direct、SOCKS5、HTTP CONNECT | M3 | Verified | 认证、DNS 策略、超时一致 |
 | 系统代理 | M3 | Verified | 每次连接固化解析结果 |
 | SSH 跳板链 | M3 | Verified | 逐跳 host key、循环和深度限制 |
@@ -64,13 +64,13 @@ M1 基础工作区、M2 SSH 终端和 M3 SFTP/复杂网络能力已通过验收�
 
 | 能力 | 目标 | 状态 | 验收重点 |
 | --- | --- | --- | --- |
-| CPU、内存、磁盘、网络监控 | M4 | Planned | agentless、低开销、探针超时 |
-| 进程与监听端口视图 | M4 | Planned | 输出上限、权限不足可诊断 |
-| Ping 与 traceroute | M4 | Planned | 平台差异、取消和速率限制 |
-| 代码片段分组、标签与搜索 | M4 | Planned | 端到端加密、快速检索 |
-| 参数化代码片段 | M4 | Planned | 类型化变量、默认只插入不执行 |
-| 路径历史与自动补全 | M4 | Planned | 按主机隔离、可清除 |
-| 终端背景和视觉配置 | M4 | Planned | 可读性、对比度和性能上限 |
+| CPU、内存、磁盘、网络监控 | M4 | Verified | agentless、独立 SSH 连接、8 秒超时、300 点环形缓冲 |
+| 进程与监听端口视图 | M4 | Verified | 512 KiB 输出上限、版本化行表、权限不足可诊断 |
+| Ping 与 traceroute | M4 | Verified | 固定模板、target 注入拒绝、取消和目标速率上限 |
+| 代码片段分组、标签与搜索 | M4 | Verified | Vault 加密记录、标签搜索与 revision 冲突 |
+| 参数化代码片段 | M4 | Verified | 五类变量、placeholder 严格匹配、默认只插入不执行 |
+| 路径历史与自动补全 | M4 | Verified | 按连接隔离、500 项有界、可清除 |
+| 终端调色板和视觉配置 | M3/M4 | Verified | 复用 M3 加密 ANSI palette；M4 不引入影响可读性与性能的背景图片 |
 
 ## 同步、中继与远程桌面
 

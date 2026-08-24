@@ -8,7 +8,9 @@ import type {
   ConnectionProfile,
   DesktopSessionEvent,
   HostKeyEvidence,
+  ReadyTerminalSession,
   SessionState,
+  TerminalInsertRequest,
   TerminalProfile,
   TerminalSize,
 } from "./types";
@@ -20,8 +22,9 @@ interface TerminalWorkspaceProps {
   activeConnectionId: string | null;
   profiles: TerminalProfile[];
   onActivity(message: string): void;
-  onReadyCountChange(count: number): void;
   onReadyConnectionsChange(connectionIds: string[]): void;
+  onReadySessionsChange(sessions: ReadyTerminalSession[]): void;
+  insertRequest: TerminalInsertRequest | null;
 }
 
 interface PaneModel {
@@ -31,23 +34,28 @@ interface PaneModel {
 let nextPaneId = 1;
 
 export function TerminalWorkspace(props: TerminalWorkspaceProps) {
-  const [readyCounts, setReadyCounts] = useState<Record<string, number>>({});
+  const [readySessions, setReadySessions] = useState<Record<string, ReadyTerminalSession[]>>({});
   const connectionKey = props.connections.map((connection) => connection.id).join("\u0000");
-  const reportReady = useCallback((connectionId: string, count: number) => {
-    setReadyCounts((current) => current[connectionId] === count ? current : { ...current, [connectionId]: count });
+  const reportReady = useCallback((connectionId: string, sessions: ReadyTerminalSession[]) => {
+    setReadySessions((current) => {
+      const observed = current[connectionId] ?? [];
+      if (observed.length === sessions.length && observed.every((value, index) => value.sessionId === sessions[index]?.sessionId)) return current;
+      return { ...current, [connectionId]: sessions };
+    });
   }, []);
   useEffect(() => {
     const visible = new Set(props.connections.map((connection) => connection.id));
-    setReadyCounts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => visible.has(id))));
+    setReadySessions((current) => Object.fromEntries(Object.entries(current).filter(([id]) => visible.has(id))));
   }, [connectionKey]);
   useEffect(() => {
-    props.onReadyCountChange(Object.values(readyCounts).reduce((total, value) => total + value, 0));
-    props.onReadyConnectionsChange(Object.entries(readyCounts).filter(([, count]) => count > 0).map(([id]) => id));
-  }, [props.onReadyConnectionsChange, props.onReadyCountChange, readyCounts]);
+    const values = Object.values(readySessions).flat();
+    props.onReadySessionsChange(values);
+    props.onReadyConnectionsChange([...new Set(values.map((value) => value.connectionId))]);
+  }, [props.onReadyConnectionsChange, props.onReadySessionsChange, readySessions]);
   useEffect(() => () => {
-    props.onReadyCountChange(0);
+    props.onReadySessionsChange([]);
     props.onReadyConnectionsChange([]);
-  }, [props.onReadyConnectionsChange, props.onReadyCountChange]);
+  }, [props.onReadyConnectionsChange, props.onReadySessionsChange]);
   return (
     <div className="terminal-tabs-content">
       {props.connections.map((connection) => (
@@ -57,37 +65,40 @@ export function TerminalWorkspace(props: TerminalWorkspaceProps) {
           connection={connection}
           profile={props.profiles.find((value) => value.id === connection.terminalProfileId)}
           active={connection.id === props.activeConnectionId}
+          insertRequest={props.insertRequest?.connectionId === connection.id ? props.insertRequest : null}
           onActivity={props.onActivity}
-          onReadyCountChange={(count) => reportReady(connection.id, count)}
+          onReadySessionsChange={reportReady}
         />
       ))}
     </div>
   );
 }
 
-function ConnectionTerminal({ bridge, connection, profile, active, onActivity, onReadyCountChange }: {
+function ConnectionTerminal({ bridge, connection, profile, active, insertRequest, onActivity, onReadySessionsChange }: {
   bridge: WorkspaceBridge;
   connection: ConnectionProfile;
   profile?: TerminalProfile;
   active: boolean;
+  insertRequest: TerminalInsertRequest | null;
   onActivity(message: string): void;
-  onReadyCountChange(count: number): void;
+  onReadySessionsChange(connectionId: string, sessions: ReadyTerminalSession[]): void;
 }) {
   const [panes, setPanes] = useState<PaneModel[]>(() => [{ id: nextPaneId++ }]);
   const [direction, setDirection] = useState<"columns" | "rows">("columns");
   const [activePane, setActivePane] = useState(panes[0].id);
-  const [readyPanes, setReadyPanes] = useState<Set<number>>(() => new Set());
-  const updatePaneReady = useCallback((paneId: number, ready: boolean) => {
+  const [readyPanes, setReadyPanes] = useState<Record<number, string>>({});
+  const updatePaneReady = useCallback((paneId: number, sessionId: string | null, ready: boolean) => {
     setReadyPanes((current) => {
-      const next = new Set(current);
-      if (ready) next.add(paneId); else next.delete(paneId);
+      const next = { ...current };
+      if (ready && sessionId) next[paneId] = sessionId;
+      else delete next[paneId];
       return next;
     });
   }, []);
 
   useEffect(() => {
-    onReadyCountChange(readyPanes.size);
-  }, [onReadyCountChange, readyPanes]);
+    onReadySessionsChange(connection.id, Object.values(readyPanes).map((sessionId) => ({ sessionId, connectionId: connection.id })));
+  }, [connection.id, onReadySessionsChange, readyPanes]);
 
   const addPane = (nextDirection: "columns" | "rows") => {
     const pane = { id: nextPaneId++ };
@@ -103,11 +114,7 @@ function ConnectionTerminal({ bridge, connection, profile, active, onActivity, o
       setActivePane((selected) => selected === id ? next[0].id : selected);
       return next;
     });
-    setReadyPanes((current) => {
-      const next = new Set(current);
-      next.delete(id);
-      return next;
-    });
+    setReadyPanes((current) => { const next = { ...current }; delete next[id]; return next; });
   };
 
   return (
@@ -128,6 +135,7 @@ function ConnectionTerminal({ bridge, connection, profile, active, onActivity, o
             connection={connection}
             profile={profile}
             active={active && activePane === pane.id}
+            insertRequest={active && activePane === pane.id ? insertRequest : null}
             canClose={panes.length > 1}
             onActivate={() => setActivePane(pane.id)}
             onClose={() => closePane(pane.id)}
@@ -140,23 +148,25 @@ function ConnectionTerminal({ bridge, connection, profile, active, onActivity, o
   );
 }
 
-function TerminalPane({ bridge, paneId, connection, profile, active, canClose, onActivate, onClose, onActivity, onReadyChange }: {
+function TerminalPane({ bridge, paneId, connection, profile, active, insertRequest, canClose, onActivate, onClose, onActivity, onReadyChange }: {
   bridge: WorkspaceBridge;
   paneId: number;
   connection: ConnectionProfile;
   profile?: TerminalProfile;
   active: boolean;
+  insertRequest: TerminalInsertRequest | null;
   canClose: boolean;
   onActivate(): void;
   onClose(): void;
   onActivity(message: string): void;
-  onReadyChange(paneId: number, ready: boolean): void;
+  onReadyChange(paneId: number, sessionId: string | null, ready: boolean): void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const lifecycleRef = useRef(0);
+  const commandBufferRef = useRef("");
   const [state, setState] = useState<SessionState>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [hostKey, setHostKey] = useState<HostKeyEvidence | null>(null);
@@ -178,7 +188,7 @@ function TerminalPane({ bridge, paneId, connection, profile, active, canClose, o
   const handleEvent = useCallback((envelope: DesktopSessionEvent) => {
     if (envelope.event.type === "state") {
       setState(envelope.event.state);
-      onReadyChange(paneId, envelope.event.state === "ready");
+      onReadyChange(paneId, envelope.sessionId, envelope.event.state === "ready");
       return;
     }
     if (envelope.event.type === "output") {
@@ -227,6 +237,7 @@ function TerminalPane({ bridge, paneId, connection, profile, active, canClose, o
       }
       sessionIdRef.current = session.id;
       setState(session.state);
+      if (session.state === "ready") onReadyChange(paneId, session.id, true);
       onActivity(`${connection.name} 会话已创建`);
     } catch (reason) {
       if (generation !== lifecycleRef.current) return;
@@ -258,7 +269,10 @@ function TerminalPane({ bridge, paneId, connection, profile, active, canClose, o
     fitRef.current = fit;
     const input = terminal.onData((data) => {
       const sessionId = sessionIdRef.current;
-      if (sessionId) void bridge.sendTerminalInput(sessionId, [...textEncoder.encode(data)]).catch(() => undefined);
+      if (sessionId) {
+        void bridge.sendTerminalInput(sessionId, [...textEncoder.encode(data)]).catch(() => undefined);
+        if (!connection.temporary) trackCommandInput(bridge, connection.id, data, commandBufferRef);
+      }
     });
     const resize = new ResizeObserver(() => {
       fit.fit();
@@ -277,7 +291,7 @@ function TerminalPane({ bridge, paneId, connection, profile, active, canClose, o
       const sessionId = sessionIdRef.current;
       sessionIdRef.current = null;
       if (sessionId) void bridge.closeTerminal(sessionId).catch(() => undefined);
-      onReadyChange(paneId, false);
+      onReadyChange(paneId, sessionId, false);
     };
   }, [bridge, connect, paneId, profile?.fontFamily, profile?.fontSize, profile?.palette, profile?.scrollback, profile?.theme, terminalSize, textEncoder, onReadyChange]);
 
@@ -286,6 +300,13 @@ function TerminalPane({ bridge, paneId, connection, profile, active, canClose, o
     fitRef.current?.fit();
     terminalRef.current?.focus();
   }, [active]);
+
+  useEffect(() => {
+    const sessionId = sessionIdRef.current;
+    if (!active || state !== "ready" || !sessionId || !insertRequest?.text) return;
+    void bridge.sendTerminalInput(sessionId, [...textEncoder.encode(insertRequest.text)]).catch(() => undefined);
+    terminalRef.current?.focus();
+  }, [active, bridge, insertRequest?.sequence, insertRequest?.text, state, textEncoder]);
 
   const reconnect = async () => {
     const sessionId = sessionIdRef.current;
@@ -355,6 +376,26 @@ function TerminalPane({ bridge, paneId, connection, profile, active, canClose, o
       {logPath && <div className="logging-indicator"><FileText size={12} />记录中</div>}
     </div>
   );
+}
+
+function trackCommandInput(
+  bridge: WorkspaceBridge,
+  connectionId: string,
+  data: string,
+  buffer: React.MutableRefObject<string>,
+) {
+  if (data.includes("\u001b")) return;
+  for (const character of data) {
+    if (character === "\r" || character === "\n") {
+      const command = buffer.current.trim();
+      buffer.current = "";
+      if (command) void bridge.recordCommand(connectionId, command).catch(() => undefined);
+    } else if (character === "\b" || character === "\u007f") {
+      buffer.current = [...buffer.current].slice(0, -1).join("");
+    } else if (!/\p{C}/u.test(character) && buffer.current.length < 4096) {
+      buffer.current += character;
+    }
+  }
 }
 
 function stateLabel(state: SessionState) {

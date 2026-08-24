@@ -14,7 +14,7 @@ FirstShell 使用 SQLite 作为本地权威存储，通过 `rusqlite` 的 bundle
 
 ## 概念表
 
-M1 冻结的 schema version 2 包含下列实际表。后续里程碑新增表必须通过递增迁移落地，不能把规划表当成当前 schema：
+M4 当前 schema version 3 包含下列实际表。后续里程碑新增表必须通过递增迁移落地，不能把规划表当成当前 schema：
 
 | 表 | 明文索引字段 | 加密内容 | 主要用途 |
 | --- | --- | --- | --- |
@@ -26,8 +26,10 @@ M1 冻结的 schema version 2 包含下列实际表。后续里程碑新增表�
 | `proxy_profiles` | id、kind、revision、deleted_at | 代理地址、认证、DNS 策略 | SOCKS5、HTTP CONNECT、系统代理 |
 | `terminal_profiles` | id、revision | 字体、预设主题、自定义 ANSI palette、键位、编码、行为配置 | 终端外观与交互 |
 | `ui_state` | workspace_id、revision | 布局、面板尺寸、最近标签 | 工作区恢复 |
+| `snippets` | id、revision、deleted_at | 名称、标签、单行模板、类型化参数 | 加密命令片段与乐观并发 |
+| `efficiency_state` | workspace_id、revision | 最多 500 项命令/路径历史 | 有界本地效率状态 |
 
-M0 的 `probe_records` 仍保留用于 schema 1 到 schema 2 的真实升级测试，不承载产品数据。`tunnel_profiles`、`snippets`、`command_history`、`transfer_jobs`、`sync_state` 和 `sync_outbox` 分别属于后续里程碑，只有迁移合入后才进入当前表清单。M2 的 known_hosts 是应用数据目录中的 OpenSSH 格式安全文件，不是数据库表；若后续需要同步或结构化管理，必须新增迁移和安全决策。
+M0 的 `probe_records` 仍保留用于旧 schema 的真实升级测试，不承载产品数据。M4 选择一个 `efficiency_state` 密文对象而不是逐命令明文索引表；`tunnel_profiles`、`transfer_jobs`、`sync_state` 和 `sync_outbox` 仍属于后续里程碑。M2 的 known_hosts 是应用数据目录中的 OpenSSH 格式安全文件，不是数据库表；若后续需要同步或结构化管理，必须新增迁移和安全决策。
 
 不使用通用 EAV 表承载核心业务实体。具体表能提供更清晰的约束、迁移和查询计划；扩展字段通过版本化 payload 演进，而不是无限制 JSON 堆积。
 
@@ -65,6 +67,8 @@ M3 仍不改变 schema version 2。连接加密 payload 增加有序 `jumpHostId
 
 M3 补充继续保持 schema version 2。terminal profile 加密 payload 增加可选 `palette`；旧记录缺少该字段时按 `None` 读取。`theme=custom` 必须携带完整的前景、背景、光标、选区与 16 个 ANSI `#RRGGBB` 颜色；其他预设只保存稳定 ID 并拒绝冗余 palette。companion SFTP 的 workspace ID、目录缓存和自动抑制状态仍为进程内状态，不写入 SQLite。
 
+M4 migration 3 新增 `snippets` 与 `efficiency_state`。片段的名称、标签、模板和参数整体使用记录级 AEAD；更新与软删除继续受 expected revision 约束。历史按 workspace 聚合在单个密文 payload 中，写入前去重并截断到最近 500 项；查询可按 connection ID 过滤且最多返回请求上限。portable export/import 包含片段，命令历史作为本机效率状态不进入 portable snapshot。监控 300 点环形缓冲、probe diagnostic、广播目标、远程编辑器内容和 ZMODEM/传输状态全部留在进程内。
+
 ## 查询与搜索
 
 密文不支持可靠的数据库全文检索。解锁后，应用按用户范围逐批解密名称、标签、片段和可选历史，建立内存搜索索引；锁定时销毁。索引设内存上限，对大历史采用按需分页，不把明文索引写回磁盘。
@@ -92,7 +96,7 @@ M3 补充继续保持 schema version 2。terminal profile 加密 payload 增加�
 | 终端滚屏 | 仅内存，受终端行数上限控制 |
 | 会话日志 | 默认关闭；显式开启后写入应用数据目录，只记录远端输出并保留 7 天 |
 | 监控采样 | 内存环形缓冲，默认不持久化 |
-| 命令历史 | 可配置、加密、支持按连接或全局清除 |
+| 命令/路径历史 | 最多 500 项、加密、支持按连接查询或全局清除；不自动执行 |
 | 传输任务 | M3 仅进程内保留；Vault 锁定清空，不保留本地路径或文件内容 |
 | tombstone | 在同步保留窗口和设备确认后压缩 |
 | 安全审计 | 只保留事件类型和脱敏上下文，按期限轮转 |

@@ -47,7 +47,7 @@ export function BackupDialog(props: BackupDialogProps) {
           <form className="entity-form" onSubmit={validate}>
             <label><span>备份文件名</span><input autoFocus required pattern="[^/\\]+\.firstshell-backup" value={fileName} onChange={(event) => { setFileName(event.target.value); setSummary(null); }} /></label>
             <label><span>导出口令</span><input type="password" minLength={1} maxLength={1024} required value={password} onChange={(event) => { setPassword(event.target.value); setSummary(null); }} /></label>
-            {summary && <div className="result-block"><ShieldCheck size={17} /><div><strong>{summary.connections} 个连接</strong><span>{summary.folders} 个文件夹 · {summary.proxies} 个代理 · {summary.terminalProfiles} 个终端配置</span></div></div>}
+            {summary && <div className="result-block"><ShieldCheck size={17} /><div><strong>{summary.connections} 个连接</strong><span>{summary.folders} 个文件夹 · {summary.proxies} 个代理 · {summary.terminalProfiles} 个终端配置 · {summary.snippets} 个片段</span></div></div>}
             {restored && <div className="result-block success"><ArchiveRestore size={17} /><div><strong>恢复完成</strong><span>{restored.recoveryFileName}</span></div></div>}
             {props.error && <div className="inline-error" role="alert">{props.error}</div>}
             <footer className="modal-actions"><button type="submit" disabled={props.busy}>验证</button><button className="primary-command" type="button" disabled={props.busy || !summary} onClick={async () => { try { setRestored(await props.onRestore(fileName, password)); } catch {} }}><ArchiveRestore size={16} /><span>恢复</span></button></footer>

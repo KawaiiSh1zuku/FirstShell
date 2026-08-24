@@ -47,6 +47,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 uuid = { version = "1.18", features = ["serde", "v4"] }
 url = "2.5"
 zeroize = { version = "1.8", features = ["derive"] }
+zmodem2 = "0.7.2"
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }

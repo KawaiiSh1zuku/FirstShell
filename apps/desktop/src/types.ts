@@ -144,6 +144,7 @@ export interface WorkspaceSnapshot {
   connections: ConnectionProfile[];
   proxies: ProxyProfile[];
   terminalProfiles: TerminalProfile[];
+  snippets: Snippet[];
 }
 
 export interface WorkspaceLayout {
@@ -154,7 +155,7 @@ export interface WorkspaceLayout {
 }
 
 export interface SearchResult {
-  kind: "folder" | "connection" | "proxy" | "terminal_profile";
+  kind: "folder" | "connection" | "proxy" | "terminal_profile" | "snippet";
   id: string;
   label: string;
   detail: string;
@@ -170,6 +171,41 @@ export interface ImportSummary {
   connections: number;
   proxies: number;
   terminalProfiles: number;
+  snippets: number;
+}
+
+export type SnippetParameterKind = "text" | "integer" | "choice" | "host" | "path";
+
+export interface SnippetParameter {
+  name: string;
+  label: string;
+  kind: SnippetParameterKind;
+  required: boolean;
+  defaultValue: string;
+  choices: string[];
+}
+
+export interface Snippet {
+  id: string;
+  revision: number;
+  name: string;
+  tags: string[];
+  template: string;
+  parameters: SnippetParameter[];
+}
+
+export interface SnippetInput {
+  name: string;
+  tags: string[];
+  template: string;
+  parameters: SnippetParameter[];
+}
+
+export interface CommandHistoryEntry {
+  connectionId: string;
+  command: string;
+  path: string | null;
+  recordedAtMs: number;
 }
 
 export interface RestoreReceipt {
@@ -196,6 +232,17 @@ export interface SessionSnapshot {
   id: string;
   state: SessionState;
   size: TerminalSize;
+}
+
+export interface ReadyTerminalSession {
+  sessionId: string;
+  connectionId: string;
+}
+
+export interface TerminalInsertRequest {
+  sequence: number;
+  connectionId: string;
+  text: string;
 }
 
 export type SessionEvent =
@@ -243,6 +290,19 @@ export interface RemoteEntry {
   modifiedAt: number | null;
   permissions: number | null;
   linkTarget: string | null;
+}
+
+export interface RemoteEditDocument {
+  path: string;
+  content: string;
+  fingerprint: string;
+  utf8Bom: boolean;
+  bytes: number;
+}
+
+export interface ArchiveReceipt {
+  path: string;
+  bytes: number;
 }
 
 export interface SftpWorkspaceSnapshot {
@@ -309,6 +369,53 @@ export interface DesktopTunnelSnapshot {
   state: "host_key_required" | "running";
   tunnel: TunnelSnapshot | null;
   hostKey: HostKeyEvidence | null;
+}
+
+export type ProbeKind =
+  | { type: "host_metrics" }
+  | { type: "processes" }
+  | { type: "listening_ports" }
+  | { type: "ping"; target: string; count: number }
+  | { type: "traceroute"; target: string; max_hops: number };
+
+export interface ProbeMetric {
+  key: string;
+  value: number;
+  unit: string;
+}
+
+export interface ProbeRow {
+  kind: string;
+  cells: string[];
+}
+
+export interface ProbeResult {
+  version: number;
+  probe: ProbeKind;
+  capturedAtMs: number;
+  exitCode: number | null;
+  metrics: ProbeMetric[];
+  rows: ProbeRow[];
+  diagnostic: string | null;
+}
+
+export type MonitorState = "host_key_required" | "running" | "degraded";
+
+export interface MonitorSnapshot {
+  id: string;
+  connectionId: string;
+  intervalSeconds: number;
+  state: MonitorState;
+  sampleCount: number;
+  diagnostic: string | null;
+  hostKey: HostKeyEvidence | null;
+}
+
+export interface MonitorEvent {
+  monitorId: string;
+  state: MonitorState;
+  sample: ProbeResult | null;
+  diagnostic: string | null;
 }
 
 export type Selection =

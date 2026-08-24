@@ -86,7 +86,13 @@ M3 的 SOCKS5/HTTP CONNECT 代理密码采用独立 keyring 项，协议错误�
 
 companion SFTP 只在持久化 SSH connection 的终端 ready 后触发，失败不改变终端状态。同连接多 pane 共享一个 SFTP workspace；用户关闭、最后一个 pane 退出、Vault 锁定或应用退出都会回收。可输入地址栏先拒绝 canonical root 外绝对地址和 `..`，Rust `SftpWorkspace` 仍执行最终 rooted path 与 symlink 检查。
 
-监控探针使用固定模板与结构化参数，禁止把主机返回值重新拼入 shell。代码片段参数按类型替换，默认只插入终端供用户检查，自动执行必须逐片段显式授权。
+M4 监控只接受固定 host/process/port/ping/traceroute 模板。ping/traceroute target 拒绝 shell 元字符、空白和 `-` 起始的 option smuggling；探针限时 8 秒、输出 512 KiB，并在 Rust 侧清除控制字符、限制行列后才形成 DTO。每个周期监控使用独立低优先级 SSH 连接、最多 16 个、300 点环形缓冲；监控返回内容不会再次拼入 shell，也不进入数据库。
+
+代码片段声明的 placeholder 必须与类型化参数完全一致。Rust 对 text、integer、choice、host 和 path 分别验证长度、控制字符和允许值，渲染结果仍限单行；默认动作只插入活动终端，不附加 Enter。命令/路径历史仅在用户输入 Enter 后记录，控制序列不进入历史，最多加密保留 500 项并可清除。
+
+广播只使用 WebView 可见的不透明 ready session ID，最多 16 个目标。Rust 在任何发送前统一验证重复/缺失 ID、队列容量、单行命令、控制字符和显式确认；失败时没有部分广播。紧急停止只向当前显式选择发送 Ctrl-C，不扩大到其他会话。
+
+远程编辑只打开 rooted regular UTF-8 文件，限制 2 MiB 并拒绝 NUL/symlink；保存携带原始 SHA-256，写临时文件前和替换前两次检查冲突。受控压缩仅允许新 `.tar.gz`、最多 64 个 rooted source、固定 shell-quoted `tar` 模板、120 秒和 64 KiB 输出上限。ZMODEM 使用远端 `rz --protect`/`sz --` 与 `zmodem2` 状态机，限制 10 分钟和 4 GiB，校验 advertised filename，继续复用原生文件选择、取消和 2 并发队列；不存在通用远程 shell 或任意本地路径 IPC。
 
 ## 同步服务
 
@@ -117,6 +123,7 @@ RDP helper 使用独立进程和版本化本地 IPC。IPC 连接采用每次启�
 | SSH | 首次信任、密钥变化、密码/私钥/keyboard-interactive、agent 安全失败、弱算法、恶意 banner、受限回退 |
 | IPC | 未授权窗口、畸形参数、超长输入、状态越权、外部导航 |
 | 文件传输 | 路径穿越、符号链接、冲突覆盖、中断续传、磁盘写满 |
+| 监控与效率工具 | 探针注入/输出上限、300 点长期缓冲、片段 placeholder/类型、无部分广播、编辑冲突、ZMODEM 状态机 |
 | 同步 | 服务端篡改、旧版本回放、并发冲突、设备撤销、对象超限 |
 | 中继 | 未授权目标、配额绕过、连接劫持、协议降级、资源耗尽 |
 | 发布 | 签名验证、SBOM、依赖公告、安装/回滚、升级迁移 |

@@ -3,6 +3,7 @@
 
 mod commands;
 mod ipc_benchmark;
+mod m4_commands;
 mod session_commands;
 mod transfer_commands;
 
@@ -26,7 +27,7 @@ fn application_info(window: WebviewWindow) -> Result<ApplicationInfo, PublicErro
     }
     Ok(ApplicationInfo {
         name: "FirstShell",
-        milestone: "M3",
+        milestone: "M4",
     })
 }
 
@@ -80,10 +81,12 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         app_data.join("session-logs"),
     ));
     let operations = Arc::new(transfer_commands::DesktopOperations::new());
+    let tools = Arc::new(m4_commands::DesktopTools::new());
     app.manage(DesktopState {
         workspace: Arc::clone(&workspace),
         sessions: Arc::clone(&sessions),
         operations: Arc::clone(&operations),
+        tools: Arc::clone(&tools),
     });
 
     let app_handle = app.handle().clone();
@@ -94,6 +97,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             if matches!(workspace.enforce_idle_lock(), Ok(true)) {
                 sessions.close_all().await;
                 operations.close_all().await;
+                tools.close_all().await;
                 let _ = app_handle.emit_to("main", "vault-locked", ());
             }
         }
@@ -128,6 +132,13 @@ fn main() {
             commands::create_terminal_profile,
             commands::update_terminal_profile,
             commands::delete_terminal_profile,
+            commands::create_snippet,
+            commands::update_snippet,
+            commands::delete_snippet,
+            commands::render_snippet,
+            commands::record_command_history,
+            commands::list_command_history,
+            commands::clear_command_history,
             commands::search_workspace,
             commands::load_workspace_layout,
             commands::save_workspace_layout,
@@ -142,6 +153,8 @@ fn main() {
             session_commands::open_quick_terminal,
             session_commands::list_terminal_sessions,
             session_commands::send_terminal_input,
+            session_commands::broadcast_terminal_command,
+            session_commands::stop_terminal_broadcast,
             session_commands::resize_terminal,
             session_commands::reconnect_terminal,
             session_commands::close_terminal,
@@ -157,9 +170,14 @@ fn main() {
             transfer_commands::rename_sftp_entry,
             transfer_commands::delete_sftp_entry,
             transfer_commands::chmod_sftp_entry,
+            transfer_commands::open_remote_text,
+            transfer_commands::save_remote_text,
+            transfer_commands::create_remote_archive,
             transfer_commands::choose_sftp_uploads,
             transfer_commands::queue_sftp_drop,
             transfer_commands::choose_sftp_download,
+            transfer_commands::choose_zmodem_upload,
+            transfer_commands::choose_zmodem_download,
             transfer_commands::list_transfers,
             transfer_commands::pause_transfer,
             transfer_commands::cancel_transfer,
@@ -169,6 +187,11 @@ fn main() {
             transfer_commands::approve_tunnel_host_key,
             transfer_commands::list_tunnels,
             transfer_commands::close_tunnel,
+            m4_commands::start_host_monitor,
+            m4_commands::approve_monitor_host_key,
+            m4_commands::monitor_history,
+            m4_commands::run_host_probe,
+            m4_commands::stop_host_monitor,
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

@@ -82,7 +82,22 @@ CREATE TABLE ui_state (
 ) STRICT;
 ";
 
-const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_1), (2, MIGRATION_2)];
+const MIGRATION_3: &str = "
+CREATE TABLE snippets (
+    id TEXT PRIMARY KEY NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    deleted_at INTEGER,
+    payload BLOB NOT NULL
+) STRICT;
+
+CREATE TABLE efficiency_state (
+    workspace_id TEXT PRIMARY KEY NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    payload BLOB NOT NULL
+) STRICT;
+";
+
+const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_1), (2, MIGRATION_2), (3, MIGRATION_3)];
 
 /// Effective `SQLite` safety and concurrency settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,8 +145,12 @@ pub enum RecordKind {
     Proxy,
     /// Terminal profile.
     TerminalProfile,
+    /// Encrypted command snippet.
+    Snippet,
     /// Workspace layout state.
     UiState,
+    /// Encrypted local command and path history.
+    EfficiencyState,
 }
 
 /// Encrypted row with a variant-specific plaintext index envelope.
@@ -185,8 +204,26 @@ pub enum StoredRecord {
         /// Serialized authenticated-encryption envelope.
         payload: Vec<u8>,
     },
+    /// Encrypted command-snippet row.
+    Snippet {
+        /// Stable identifier.
+        id: String,
+        /// Current optimistic revision.
+        revision: u64,
+        /// Serialized authenticated-encryption envelope.
+        payload: Vec<u8>,
+    },
     /// Workspace layout row.
     UiState {
+        /// Stable workspace identifier.
+        workspace_id: String,
+        /// Current optimistic revision.
+        revision: u64,
+        /// Serialized authenticated-encryption envelope.
+        payload: Vec<u8>,
+    },
+    /// Encrypted workspace-local efficiency state.
+    EfficiencyState {
         /// Stable workspace identifier.
         workspace_id: String,
         /// Current optimistic revision.
@@ -205,7 +242,9 @@ impl StoredRecord {
             Self::Connection { .. } => RecordKind::Connection,
             Self::Proxy { .. } => RecordKind::Proxy,
             Self::TerminalProfile { .. } => RecordKind::TerminalProfile,
+            Self::Snippet { .. } => RecordKind::Snippet,
             Self::UiState { .. } => RecordKind::UiState,
+            Self::EfficiencyState { .. } => RecordKind::EfficiencyState,
         }
     }
 
@@ -216,8 +255,11 @@ impl StoredRecord {
             Self::Folder { id, .. }
             | Self::Connection { id, .. }
             | Self::Proxy { id, .. }
-            | Self::TerminalProfile { id, .. } => id,
-            Self::UiState { workspace_id, .. } => workspace_id,
+            | Self::TerminalProfile { id, .. }
+            | Self::Snippet { id, .. } => id,
+            Self::UiState { workspace_id, .. } | Self::EfficiencyState { workspace_id, .. } => {
+                workspace_id
+            }
         }
     }
 
@@ -229,7 +271,9 @@ impl StoredRecord {
             | Self::Connection { revision, .. }
             | Self::Proxy { revision, .. }
             | Self::TerminalProfile { revision, .. }
-            | Self::UiState { revision, .. } => *revision,
+            | Self::Snippet { revision, .. }
+            | Self::UiState { revision, .. }
+            | Self::EfficiencyState { revision, .. } => *revision,
         }
     }
 
@@ -240,7 +284,9 @@ impl StoredRecord {
             | Self::Connection { revision, .. }
             | Self::Proxy { revision, .. }
             | Self::TerminalProfile { revision, .. }
-            | Self::UiState { revision, .. } => *revision = next_revision,
+            | Self::Snippet { revision, .. }
+            | Self::UiState { revision, .. }
+            | Self::EfficiencyState { revision, .. } => *revision = next_revision,
         }
     }
 
@@ -250,7 +296,9 @@ impl StoredRecord {
             | Self::Connection { payload, .. }
             | Self::Proxy { payload, .. }
             | Self::TerminalProfile { payload, .. }
-            | Self::UiState { payload, .. } => payload,
+            | Self::Snippet { payload, .. }
+            | Self::UiState { payload, .. }
+            | Self::EfficiencyState { payload, .. } => payload,
         }
     }
 }
@@ -488,8 +536,13 @@ impl DbActor {
         expected_revision: u64,
     ) -> Result<(), StorageError> {
         validate_record(&record, Some(expected_revision))?;
-        if record.kind() == RecordKind::UiState {
-            return Err(StorageError::InvalidRecord("UI state cannot be restored"));
+        if matches!(
+            record.kind(),
+            RecordKind::UiState | RecordKind::EfficiencyState
+        ) {
+            return Err(StorageError::InvalidRecord(
+                "singleton state cannot be restored",
+            ));
         }
         self.request(|reply| Request::Restore {
             record,
@@ -855,11 +908,33 @@ fn list_records(
                 })
             },
         ),
+        RecordKind::Snippet => query_records(
+            connection,
+            "SELECT id, revision, payload FROM snippets WHERE deleted_at IS NULL ORDER BY id",
+            |row| {
+                Ok(StoredRecord::Snippet {
+                    id: row.get(0)?,
+                    revision: read_revision(row, 1)?,
+                    payload: row.get(2)?,
+                })
+            },
+        ),
         RecordKind::UiState => query_records(
             connection,
             "SELECT workspace_id, revision, payload FROM ui_state ORDER BY workspace_id",
             |row| {
                 Ok(StoredRecord::UiState {
+                    workspace_id: row.get(0)?,
+                    revision: read_revision(row, 1)?,
+                    payload: row.get(2)?,
+                })
+            },
+        ),
+        RecordKind::EfficiencyState => query_records(
+            connection,
+            "SELECT workspace_id, revision, payload FROM efficiency_state ORDER BY workspace_id",
+            |row| {
+                Ok(StoredRecord::EfficiencyState {
                     workspace_id: row.get(0)?,
                     revision: read_revision(row, 1)?,
                     payload: row.get(2)?,
@@ -914,7 +989,14 @@ fn read_deleted_record(
                 |row| Ok(StoredRecord::TerminalProfile { id: row.get(0)?, revision: read_revision(row, 1)?, payload: row.get(2)? }),
             )
             .optional()?,
-        RecordKind::UiState => None,
+        RecordKind::Snippet => connection
+            .query_row(
+                "SELECT id, revision, payload FROM snippets WHERE id=?1 AND deleted_at IS NOT NULL",
+                [id],
+                |row| Ok(StoredRecord::Snippet { id: row.get(0)?, revision: read_revision(row, 1)?, payload: row.get(2)? }),
+            )
+            .optional()?,
+        RecordKind::UiState | RecordKind::EfficiencyState => None,
     };
     Ok(record)
 }
@@ -967,12 +1049,28 @@ fn save_record(
             "UPDATE terminal_profiles SET revision=?2, payload=?3 WHERE id=?1 AND revision=?4 AND deleted_at IS NULL",
             params![id, revision, payload, sql_revision(expected)?],
         ),
+        (StoredRecord::Snippet { id, payload, .. }, None) => connection.execute(
+            "INSERT INTO snippets(id, revision, payload) VALUES (?1, ?2, ?3)",
+            params![id, revision, payload],
+        ),
+        (StoredRecord::Snippet { id, payload, .. }, Some(expected)) => connection.execute(
+            "UPDATE snippets SET revision=?2, payload=?3 WHERE id=?1 AND revision=?4 AND deleted_at IS NULL",
+            params![id, revision, payload, sql_revision(expected)?],
+        ),
         (StoredRecord::UiState { workspace_id, payload, .. }, None) => connection.execute(
             "INSERT INTO ui_state(workspace_id, revision, payload) VALUES (?1, ?2, ?3)",
             params![workspace_id, revision, payload],
         ),
         (StoredRecord::UiState { workspace_id, payload, .. }, Some(expected)) => connection.execute(
             "UPDATE ui_state SET revision=?2, payload=?3 WHERE workspace_id=?1 AND revision=?4",
+            params![workspace_id, revision, payload, sql_revision(expected)?],
+        ),
+        (StoredRecord::EfficiencyState { workspace_id, payload, .. }, None) => connection.execute(
+            "INSERT INTO efficiency_state(workspace_id, revision, payload) VALUES (?1, ?2, ?3)",
+            params![workspace_id, revision, payload],
+        ),
+        (StoredRecord::EfficiencyState { workspace_id, payload, .. }, Some(expected)) => connection.execute(
+            "UPDATE efficiency_state SET revision=?2, payload=?3 WHERE workspace_id=?1 AND revision=?4",
             params![workspace_id, revision, payload, sql_revision(expected)?],
         ),
     }
@@ -991,8 +1089,10 @@ fn delete_record(
     id: &str,
     expected_revision: u64,
 ) -> Result<(), StorageError> {
-    if kind == RecordKind::UiState {
-        return Err(StorageError::InvalidRecord("UI state cannot be tombstoned"));
+    if matches!(kind, RecordKind::UiState | RecordKind::EfficiencyState) {
+        return Err(StorageError::InvalidRecord(
+            "singleton state cannot be tombstoned",
+        ));
     }
     let sql = match kind {
         RecordKind::Folder => {
@@ -1007,7 +1107,10 @@ fn delete_record(
         RecordKind::TerminalProfile => {
             "UPDATE terminal_profiles SET deleted_at=unixepoch(), revision=revision+1 WHERE id=?1 AND revision=?2 AND deleted_at IS NULL"
         }
-        RecordKind::UiState => unreachable!(),
+        RecordKind::Snippet => {
+            "UPDATE snippets SET deleted_at=unixepoch(), revision=revision+1 WHERE id=?1 AND revision=?2 AND deleted_at IS NULL"
+        }
+        RecordKind::UiState | RecordKind::EfficiencyState => unreachable!(),
     };
     let changed = connection
         .execute(sql, params![id, sql_revision(expected_revision)?])
@@ -1043,7 +1146,13 @@ fn restore_record(
             "UPDATE terminal_profiles SET revision=?2, payload=?3, deleted_at=NULL WHERE id=?1 AND revision=?4 AND deleted_at IS NOT NULL",
             params![id, revision, payload, expected],
         ),
-        StoredRecord::UiState { .. } => return Err(StorageError::InvalidRecord("UI state cannot be restored")),
+        StoredRecord::Snippet { id, payload, .. } => connection.execute(
+            "UPDATE snippets SET revision=?2, payload=?3, deleted_at=NULL WHERE id=?1 AND revision=?4 AND deleted_at IS NOT NULL",
+            params![id, revision, payload, expected],
+        ),
+        StoredRecord::UiState { .. } | StoredRecord::EfficiencyState { .. } => {
+            return Err(StorageError::InvalidRecord("singleton state cannot be restored"));
+        }
     }
     .map_err(map_write_error)?;
     if changed == 1 {
@@ -1074,6 +1183,8 @@ fn replace_all_records(
         "DELETE FROM connection_profiles;
          DELETE FROM proxy_profiles;
          DELETE FROM terminal_profiles;
+         DELETE FROM snippets;
+         DELETE FROM efficiency_state;
          DELETE FROM ui_state;
          DELETE FROM folders;",
     )?;
@@ -1107,7 +1218,7 @@ mod tests {
         let directory = tempdir()?;
         let actor = DbActor::open(directory.path().join("vault.db")).await?;
         let settings = actor.settings().await?;
-        assert_eq!(settings.schema_version, 2);
+        assert_eq!(settings.schema_version, 3);
         assert_eq!(settings.journal_mode, "wal");
         assert!(settings.foreign_keys);
 
@@ -1137,7 +1248,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn m0_database_should_upgrade_in_place_to_m1() -> Result<(), Box<dyn std::error::Error>> {
+    async fn m0_database_should_upgrade_in_place_to_latest_schema()
+    -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempdir()?;
         let database = directory.path().join("vault.db");
         {
@@ -1160,7 +1272,7 @@ mod tests {
         }
 
         let actor = DbActor::open(&database).await?;
-        assert_eq!(actor.settings().await?.schema_version, 2);
+        assert_eq!(actor.settings().await?.schema_version, 3);
         assert!(actor.vault_metadata().await?.is_none());
         actor.shutdown().await?;
 

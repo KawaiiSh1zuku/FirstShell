@@ -23,6 +23,8 @@ pub const BULK_QUEUE_CAPACITY: usize = 32;
 pub const DEFAULT_SESSION_LIMIT: usize = 32;
 /// Maximum terminal input accepted in one IPC operation.
 pub const MAX_INPUT_BYTES: usize = 64 * 1024;
+/// Maximum explicitly selected sessions in one atomic command broadcast.
+pub const MAX_BROADCAST_SESSIONS: usize = 16;
 /// Maximum terminal dimensions accepted from a renderer.
 pub const MAX_TERMINAL_CELLS: u16 = 2_000;
 
@@ -312,6 +314,48 @@ impl SessionRegistry {
         self.try_send(id, ActorCommand::Input(data)).await
     }
 
+    /// Atomically enqueues identical bounded input for explicitly selected sessions.
+    ///
+    /// All targets and queue capacity are checked before any session receives bytes.
+    ///
+    /// # Errors
+    /// Rejects empty/duplicate/oversized target sets, oversized input, missing sessions,
+    /// or saturated queues without partially broadcasting.
+    pub async fn broadcast_input(
+        &self,
+        ids: &[SessionId],
+        data: Vec<u8>,
+    ) -> Result<(), SessionError> {
+        if ids.is_empty() || ids.len() > MAX_BROADCAST_SESSIONS {
+            return Err(SessionError::InvalidTargets);
+        }
+        if data.len() > MAX_INPUT_BYTES {
+            return Err(SessionError::InputTooLarge);
+        }
+        let mut unique = std::collections::HashSet::with_capacity(ids.len());
+        if !ids.iter().copied().all(|id| unique.insert(id)) {
+            return Err(SessionError::InvalidTargets);
+        }
+        let entries = self.entries.lock().await;
+        let targets = ids
+            .iter()
+            .map(|id| entries.get(id).ok_or(SessionError::NotFound))
+            .collect::<Result<Vec<_>, _>>()?;
+        if targets
+            .iter()
+            .any(|entry| entry.commands.capacity() == 0 || entry.commands.is_closed())
+        {
+            return Err(SessionError::ResourceExhausted);
+        }
+        for entry in targets {
+            entry
+                .commands
+                .try_send(ActorCommand::Input(data.clone()))
+                .map_err(|_| SessionError::ResourceExhausted)?;
+        }
+        Ok(())
+    }
+
     /// Updates terminal dimensions.
     ///
     /// # Errors
@@ -525,6 +569,9 @@ pub enum SessionError {
     /// Terminal input exceeded the per-message boundary.
     #[error("terminal input is too large")]
     InputTooLarge,
+    /// Broadcast target selection is empty, duplicate, or above its bound.
+    #[error("terminal broadcast targets are invalid")]
+    InvalidTargets,
     /// Terminal dimensions were invalid.
     #[error("terminal dimensions are invalid")]
     InvalidSize,
@@ -563,6 +610,7 @@ impl SessionError {
         match self {
             Self::ResourceExhausted => "RESOURCE_EXHAUSTED",
             Self::InputTooLarge => "INPUT_TOO_LARGE",
+            Self::InvalidTargets => "INVALID_TARGETS",
             Self::InvalidSize => "INVALID_SIZE",
             Self::NotFound => "NOT_FOUND",
             Self::Closed => "SESSION_CLOSED",
@@ -1057,6 +1105,71 @@ mod tests {
                 .await,
             Err(SessionError::InputTooLarge)
         ));
+    }
+
+    #[tokio::test]
+    async fn broadcast_should_reject_invalid_targets_without_partial_delivery() {
+        let registry = SessionRegistry::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let open = |captured: Arc<Mutex<Vec<(SessionId, SessionEvent)>>>| async {
+            registry
+                .open(
+                    Arc::new(EchoFactory),
+                    TerminalSize::default(),
+                    Arc::new(move |id, event| {
+                        captured
+                            .lock()
+                            .expect("broadcast event lock")
+                            .push((id, event));
+                    }),
+                )
+                .await
+                .expect("broadcast target should open")
+        };
+        let first = open(Arc::clone(&events)).await;
+        let second = open(Arc::clone(&events)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        events.lock().expect("broadcast event lock").clear();
+
+        assert!(matches!(
+            registry
+                .broadcast_input(&[first.id, SessionId::new()], b"unsafe\r".to_vec())
+                .await,
+            Err(SessionError::NotFound)
+        ));
+        assert!(matches!(
+            registry
+                .broadcast_input(&[first.id, first.id], b"duplicate\r".to_vec())
+                .await,
+            Err(SessionError::InvalidTargets)
+        ));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            events
+                .lock()
+                .expect("broadcast event lock")
+                .iter()
+                .all(|(_, event)| !matches!(event, SessionEvent::Output { .. }))
+        );
+
+        registry
+            .broadcast_input(&[first.id, second.id], vec![0x03])
+            .await
+            .expect("emergency stop should reach the exact valid target set");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let delivered = events
+            .lock()
+            .expect("broadcast event lock")
+            .iter()
+            .filter_map(|(id, event)| match event {
+                SessionEvent::Output { data } if data == &[0x03] => Some(*id),
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            delivered,
+            std::collections::HashSet::from([first.id, second.id])
+        );
     }
 
     #[tokio::test]

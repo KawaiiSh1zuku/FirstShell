@@ -1,15 +1,17 @@
 //! Secure workspace use cases shared by the desktop adapter and tests.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use firstshell_domain::{
-    ConnectionId, ConnectionInput, ConnectionKind, ConnectionProfile, ErrorCode, Folder, FolderId,
-    FolderInput, ProxyId, ProxyInput, ProxyKind, ProxyProfile, PublicError, SearchResult,
-    SearchResultKind, SshAuthenticationKind, TerminalEncoding, TerminalKeymap, TerminalProfile,
-    TerminalProfileId, TerminalProfileInput, WorkspaceLayout, WorkspaceSnapshot,
+    CommandHistoryEntry, ConnectionId, ConnectionInput, ConnectionKind, ConnectionProfile,
+    ErrorCode, Folder, FolderId, FolderInput, ProxyId, ProxyInput, ProxyKind, ProxyProfile,
+    PublicError, SearchResult, SearchResultKind, Snippet, SnippetId, SnippetInput,
+    SnippetParameter, SnippetParameterKind, SshAuthenticationKind, TerminalEncoding,
+    TerminalKeymap, TerminalProfile, TerminalProfileId, TerminalProfileInput, WorkspaceLayout,
+    WorkspaceSnapshot,
 };
 use firstshell_security::{
     ExportEnvelope, OsKeyring, RecordContext, RecoveryKeySlot, SealedPayload, SecurityError,
@@ -29,6 +31,7 @@ const KEY_VERSION: u32 = 1;
 const WORKSPACE_ID: &str = "default";
 const VAULT_VERIFIER: &[u8] = b"firstshell-vault-verifier-v1";
 const MAX_IMPORT_BYTES: u64 = 512 * 1024 * 1024 + 1024 * 1024;
+const MAX_HISTORY_ENTRIES: usize = 500;
 
 /// Files owned by one local workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +136,8 @@ pub struct ImportSummary {
     pub proxies: usize,
     /// Terminal profile count.
     pub terminal_profiles: usize,
+    /// Encrypted command snippet count.
+    pub snippets: usize,
 }
 
 /// Result of an atomic import replacement.
@@ -157,6 +162,12 @@ struct PortableWorkspace {
     version: u16,
     snapshot: WorkspaceSnapshot,
     layout: WorkspaceLayout,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EfficiencyState {
+    command_history: Vec<CommandHistoryEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -429,11 +440,12 @@ impl WorkspaceService {
     /// Returns a locked, storage, authentication, or payload error.
     pub async fn snapshot(&self) -> Result<WorkspaceSnapshot, PublicError> {
         ensure_unlocked(&self.session)?;
-        let (folders, connections, proxies, terminals) = tokio::try_join!(
+        let (folders, connections, proxies, terminals, snippets) = tokio::try_join!(
             self.db.list(RecordKind::Folder),
             self.db.list(RecordKind::Connection),
             self.db.list(RecordKind::Proxy),
             self.db.list(RecordKind::TerminalProfile),
+            self.db.list(RecordKind::Snippet),
         )
         .map_err(map_storage)?;
 
@@ -453,6 +465,10 @@ impl WorkspaceService {
             terminal_profiles: terminals
                 .iter()
                 .map(|record| self.open_terminal(record))
+                .collect::<Result<_, _>>()?,
+            snippets: snippets
+                .iter()
+                .map(|record| self.open_snippet(record))
                 .collect::<Result<_, _>>()?,
         };
         validate_snapshot(&snapshot)?;
@@ -938,6 +954,190 @@ impl WorkspaceService {
         self.refresh_search().await
     }
 
+    /// Creates an encrypted typed command snippet.
+    ///
+    /// # Errors
+    /// Returns a validation, encryption, or storage error.
+    pub async fn create_snippet(&self, input: SnippetInput) -> Result<Snippet, PublicError> {
+        validate_snippet_input(&input)?;
+        ensure_unlocked(&self.session)?;
+        let snippet = Snippet {
+            id: SnippetId::new(),
+            revision: 1,
+            name: input.name.trim().to_owned(),
+            tags: normalized_tags(input.tags),
+            template: input.template,
+            parameters: input.parameters,
+        };
+        self.db
+            .save(self.seal_snippet(&snippet)?, None)
+            .await
+            .map_err(map_storage)?;
+        self.refresh_search().await?;
+        Ok(snippet)
+    }
+
+    /// Updates an encrypted typed command snippet with optimistic concurrency.
+    ///
+    /// # Errors
+    /// Returns a validation, conflict, encryption, or storage error.
+    pub async fn update_snippet(
+        &self,
+        id: SnippetId,
+        expected_revision: u64,
+        input: SnippetInput,
+    ) -> Result<Snippet, PublicError> {
+        validate_snippet_input(&input)?;
+        let snapshot = self.snapshot().await?;
+        require_revision(
+            snapshot
+                .snippets
+                .iter()
+                .find(|snippet| snippet.id == id)
+                .map(|snippet| snippet.revision),
+            expected_revision,
+        )?;
+        let snippet = Snippet {
+            id,
+            revision: expected_revision.saturating_add(1),
+            name: input.name.trim().to_owned(),
+            tags: normalized_tags(input.tags),
+            template: input.template,
+            parameters: input.parameters,
+        };
+        self.db
+            .save(self.seal_snippet(&snippet)?, Some(expected_revision))
+            .await
+            .map_err(map_storage)?;
+        self.refresh_search().await?;
+        Ok(snippet)
+    }
+
+    /// Deletes an encrypted command snippet.
+    ///
+    /// # Errors
+    /// Returns a locked, conflict, or storage error.
+    pub async fn delete_snippet(
+        &self,
+        id: SnippetId,
+        expected_revision: u64,
+    ) -> Result<(), PublicError> {
+        ensure_unlocked(&self.session)?;
+        self.db
+            .delete(RecordKind::Snippet, id.to_string(), expected_revision)
+            .await
+            .map_err(map_storage)?;
+        self.refresh_search().await
+    }
+
+    /// Renders one snippet after validating every declared typed parameter in Rust.
+    ///
+    /// The returned text never receives a trailing carriage return or newline.
+    ///
+    /// # Errors
+    /// Returns a locked, not-found, missing-parameter, or type-validation error.
+    pub async fn render_snippet(
+        &self,
+        id: SnippetId,
+        values: BTreeMap<String, String>,
+    ) -> Result<String, PublicError> {
+        let snapshot = self.snapshot().await?;
+        let snippet = snapshot
+            .snippets
+            .iter()
+            .find(|snippet| snippet.id == id)
+            .ok_or_else(not_found)?;
+        if values.len() != snippet.parameters.len() {
+            return Err(invalid(
+                "snippet parameter set does not match its declaration",
+            ));
+        }
+        let mut rendered = snippet.template.clone();
+        for parameter in &snippet.parameters {
+            let supplied = values
+                .get(&parameter.name)
+                .map_or(parameter.default_value.as_str(), String::as_str);
+            validate_snippet_value(parameter, supplied)?;
+            rendered = rendered.replace(&format!("{{{{{}}}}}", parameter.name), supplied);
+        }
+        if rendered.contains("{{") || rendered.contains("}}") {
+            return Err(invalid("snippet contains an undeclared placeholder"));
+        }
+        Ok(rendered)
+    }
+
+    /// Records one encrypted command and inferred path history item.
+    ///
+    /// # Errors
+    /// Returns a validation, locked, reference, encryption, or storage error.
+    pub async fn record_command(
+        &self,
+        connection_id: ConnectionId,
+        command: String,
+    ) -> Result<CommandHistoryEntry, PublicError> {
+        validate_history_command(&command)?;
+        if !self
+            .snapshot()
+            .await?
+            .connections
+            .iter()
+            .any(|connection| connection.id == connection_id)
+        {
+            return Err(not_found());
+        }
+        let (mut state, expected) = self.load_efficiency_state().await?;
+        let command = command.trim().to_owned();
+        let entry = CommandHistoryEntry {
+            connection_id,
+            path: infer_path(&command),
+            command,
+            recorded_at_ms: unix_millis(),
+        };
+        if !state.command_history.last().is_some_and(|last| {
+            last.connection_id == entry.connection_id && last.command == entry.command
+        }) {
+            state.command_history.push(entry.clone());
+        }
+        if state.command_history.len() > MAX_HISTORY_ENTRIES {
+            let remove = state.command_history.len() - MAX_HISTORY_ENTRIES;
+            state.command_history.drain(..remove);
+        }
+        self.save_efficiency_state(&state, expected).await?;
+        Ok(entry)
+    }
+
+    /// Lists newest encrypted command history for one connection or all connections.
+    ///
+    /// # Errors
+    /// Returns a locked, validation, storage, authentication, or payload error.
+    pub async fn command_history(
+        &self,
+        connection_id: Option<ConnectionId>,
+        limit: usize,
+    ) -> Result<Vec<CommandHistoryEntry>, PublicError> {
+        if !(1..=MAX_HISTORY_ENTRIES).contains(&limit) {
+            return Err(invalid("history limit is invalid"));
+        }
+        let (state, _) = self.load_efficiency_state().await?;
+        Ok(state
+            .command_history
+            .into_iter()
+            .rev()
+            .filter(|entry| connection_id.is_none_or(|id| entry.connection_id == id))
+            .take(limit)
+            .collect())
+    }
+
+    /// Clears encrypted command and path history.
+    ///
+    /// # Errors
+    /// Returns a locked, storage, encryption, or payload error.
+    pub async fn clear_command_history(&self) -> Result<(), PublicError> {
+        let (_, expected) = self.load_efficiency_state().await?;
+        self.save_efficiency_state(&EfficiencyState::default(), expected)
+            .await
+    }
+
     /// Performs a bounded search over decrypted in-memory fields.
     ///
     /// # Errors
@@ -1114,6 +1314,7 @@ impl WorkspaceService {
                 + portable.snapshot.connections.len()
                 + portable.snapshot.proxies.len()
                 + portable.snapshot.terminal_profiles.len()
+                + portable.snapshot.snippets.len()
                 + 1,
         );
         for source in &portable.snapshot.folders {
@@ -1135,6 +1336,11 @@ impl WorkspaceService {
             let mut value = source.clone();
             value.revision = 1;
             records.push(self.seal_terminal(&value)?);
+        }
+        for source in &portable.snapshot.snippets {
+            let mut value = source.clone();
+            value.revision = 1;
+            records.push(self.seal_snippet(&value)?);
         }
         records.push(self.seal_layout(portable.layout, 1)?);
         Ok(records)
@@ -1268,6 +1474,23 @@ impl WorkspaceService {
                     .to_lowercase(),
                 }),
         );
+        index.extend(snapshot.snippets.iter().map(|snippet| {
+            IndexedResult {
+                result: SearchResult {
+                    kind: SearchResultKind::Snippet,
+                    id: snippet.id.to_string(),
+                    label: snippet.name.clone(),
+                    detail: snippet.tags.join(" · "),
+                },
+                normalized: format!(
+                    "{} {} {}",
+                    snippet.name,
+                    snippet.tags.join(" "),
+                    snippet.template
+                )
+                .to_lowercase(),
+            }
+        }));
         *self
             .search_index
             .write()
@@ -1328,6 +1551,19 @@ impl WorkspaceService {
         })
     }
 
+    fn seal_snippet(&self, snippet: &Snippet) -> Result<StoredRecord, PublicError> {
+        Ok(StoredRecord::Snippet {
+            id: snippet.id.to_string(),
+            revision: snippet.revision,
+            payload: self.seal_value(
+                "snippets",
+                &snippet.id.to_string(),
+                snippet.revision,
+                snippet,
+            )?,
+        })
+    }
+
     fn seal_layout(
         &self,
         layout: WorkspaceLayout,
@@ -1337,6 +1573,18 @@ impl WorkspaceService {
             workspace_id: WORKSPACE_ID.to_owned(),
             revision,
             payload: self.seal_value("ui_state", WORKSPACE_ID, revision, &layout)?,
+        })
+    }
+
+    fn seal_efficiency_state(
+        &self,
+        state: &EfficiencyState,
+        revision: u64,
+    ) -> Result<StoredRecord, PublicError> {
+        Ok(StoredRecord::EfficiencyState {
+            workspace_id: WORKSPACE_ID.to_owned(),
+            revision,
+            payload: self.seal_value("efficiency_state", WORKSPACE_ID, revision, state)?,
         })
     }
 
@@ -1472,6 +1720,22 @@ impl WorkspaceService {
         Ok(profile)
     }
 
+    fn open_snippet(&self, record: &StoredRecord) -> Result<Snippet, PublicError> {
+        let StoredRecord::Snippet {
+            id,
+            revision,
+            payload,
+        } = record
+        else {
+            return Err(internal("storage returned the wrong record kind"));
+        };
+        let snippet: Snippet = self.open_value("snippets", id, *revision, payload)?;
+        if snippet.id.to_string() != *id || snippet.revision != *revision {
+            return Err(internal("snippet metadata authentication failed"));
+        }
+        Ok(snippet)
+    }
+
     fn open_layout(&self, record: &StoredRecord) -> Result<WorkspaceLayout, PublicError> {
         let StoredRecord::UiState {
             workspace_id,
@@ -1487,6 +1751,43 @@ impl WorkspaceService {
         let layout = self.open_value("ui_state", workspace_id, *revision, payload)?;
         validate_layout(layout)?;
         Ok(layout)
+    }
+
+    async fn load_efficiency_state(&self) -> Result<(EfficiencyState, Option<u64>), PublicError> {
+        ensure_unlocked(&self.session)?;
+        let records = self
+            .db
+            .list(RecordKind::EfficiencyState)
+            .await
+            .map_err(map_storage)?;
+        let Some(record) = records.first() else {
+            return Ok((EfficiencyState::default(), None));
+        };
+        let StoredRecord::EfficiencyState {
+            workspace_id,
+            revision,
+            payload,
+        } = record
+        else {
+            return Err(internal("storage returned the wrong record kind"));
+        };
+        if workspace_id != WORKSPACE_ID {
+            return Err(internal("unexpected efficiency workspace identifier"));
+        }
+        let state = self.open_value("efficiency_state", workspace_id, *revision, payload)?;
+        Ok((state, Some(*revision)))
+    }
+
+    async fn save_efficiency_state(
+        &self,
+        state: &EfficiencyState,
+        expected: Option<u64>,
+    ) -> Result<(), PublicError> {
+        let revision = expected.map_or(1, |value| value.saturating_add(1));
+        self.db
+            .save(self.seal_efficiency_state(state, revision)?, expected)
+            .await
+            .map_err(map_storage)
     }
 }
 
@@ -1680,6 +1981,155 @@ fn validate_terminal_input(input: &TerminalProfileInput) -> Result<(), PublicErr
     Ok(())
 }
 
+fn validate_snippet_input(input: &SnippetInput) -> Result<(), PublicError> {
+    validate_text("snippet name", &input.name, 1, 128)?;
+    validate_text("snippet template", &input.template, 1, 16 * 1024)?;
+    if input.template.contains(['\r', '\n']) {
+        return Err(invalid(
+            "terminal snippets must be single-line to prevent implicit execution",
+        ));
+    }
+    if input.tags.len() > 32
+        || input
+            .tags
+            .iter()
+            .any(|tag| tag.trim().is_empty() || tag.len() > 64)
+        || input.parameters.len() > 32
+    {
+        return Err(invalid("snippet tags or parameters exceed limits"));
+    }
+    let mut names = HashSet::new();
+    for parameter in &input.parameters {
+        validate_snippet_parameter(parameter)?;
+        if !names.insert(parameter.name.as_str()) {
+            return Err(invalid("snippet parameter names must be unique"));
+        }
+    }
+    let placeholders = snippet_placeholders(&input.template)?;
+    if placeholders != names {
+        return Err(invalid(
+            "snippet placeholders must exactly match declared parameters",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_snippet_parameter(parameter: &SnippetParameter) -> Result<(), PublicError> {
+    if parameter.name.is_empty()
+        || parameter.name.len() > 64
+        || !parameter
+            .name
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| byte.is_ascii_alphanumeric() || byte == b'_' && index > 0)
+        || parameter.name.as_bytes()[0].is_ascii_digit()
+    {
+        return Err(invalid("snippet parameter name is invalid"));
+    }
+    validate_text("snippet parameter label", &parameter.label, 1, 128)?;
+    validate_text(
+        "snippet parameter default",
+        &parameter.default_value,
+        0,
+        1024,
+    )?;
+    if parameter.kind == SnippetParameterKind::Choice {
+        if parameter.choices.is_empty()
+            || parameter.choices.len() > 32
+            || parameter
+                .choices
+                .iter()
+                .any(|choice| choice.is_empty() || choice.len() > 256)
+        {
+            return Err(invalid("snippet choice parameter is invalid"));
+        }
+    } else if !parameter.choices.is_empty() {
+        return Err(invalid("only choice parameters may declare choices"));
+    }
+    if !parameter.default_value.is_empty() {
+        validate_snippet_value(parameter, &parameter.default_value)?;
+    }
+    Ok(())
+}
+
+fn validate_snippet_value(parameter: &SnippetParameter, value: &str) -> Result<(), PublicError> {
+    if value.len() > 1024
+        || value.contains(['\r', '\n', '\0'])
+        || value.chars().any(char::is_control)
+        || parameter.required && value.is_empty()
+    {
+        return Err(invalid("snippet parameter value is invalid"));
+    }
+    match parameter.kind {
+        SnippetParameterKind::Text | SnippetParameterKind::Path => Ok(()),
+        SnippetParameterKind::Integer if value.parse::<i64>().is_ok() => Ok(()),
+        SnippetParameterKind::Choice if parameter.choices.iter().any(|item| item == value) => {
+            Ok(())
+        }
+        SnippetParameterKind::Host
+            if !value.is_empty()
+                && !value.starts_with('-')
+                && value.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':' | b'_')
+                }) =>
+        {
+            Ok(())
+        }
+        _ => Err(invalid("snippet parameter value does not match its type")),
+    }
+}
+
+fn snippet_placeholders(template: &str) -> Result<HashSet<&str>, PublicError> {
+    let mut placeholders = HashSet::new();
+    let mut remaining = template;
+    while let Some(start) = remaining.find("{{") {
+        let after_start = &remaining[start + 2..];
+        let end = after_start
+            .find("}}")
+            .ok_or_else(|| invalid("snippet placeholder is not closed"))?;
+        let name = &after_start[..end];
+        if name.is_empty() || name.contains(['{', '}']) {
+            return Err(invalid("snippet placeholder is invalid"));
+        }
+        placeholders.insert(name);
+        remaining = &after_start[end + 2..];
+    }
+    if remaining.contains("}}") {
+        return Err(invalid("snippet placeholder is not opened"));
+    }
+    Ok(placeholders)
+}
+
+fn validate_history_command(command: &str) -> Result<(), PublicError> {
+    if command.trim().is_empty()
+        || command.len() > 4096
+        || command.contains(['\r', '\n', '\0'])
+        || command.chars().any(char::is_control)
+    {
+        Err(invalid("command history entry is invalid"))
+    } else {
+        Ok(())
+    }
+}
+
+fn infer_path(command: &str) -> Option<String> {
+    let path = command.strip_prefix("cd ")?.trim();
+    if path.is_empty() || path.len() > 4096 || path.chars().any(char::is_control) {
+        None
+    } else {
+        Some(path.to_owned())
+    }
+}
+
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
 fn valid_terminal_color(value: &str) -> bool {
     value.len() == 7
         && value.starts_with('#')
@@ -1831,10 +2281,12 @@ fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
         .iter()
         .map(|value| value.id)
         .collect();
+    let snippet_ids: HashSet<_> = snapshot.snippets.iter().map(|value| value.id).collect();
     if folder_ids.len() != snapshot.folders.len()
         || connection_ids.len() != snapshot.connections.len()
         || proxy_ids.len() != snapshot.proxies.len()
         || terminal_ids.len() != snapshot.terminal_profiles.len()
+        || snippet_ids.len() != snapshot.snippets.len()
     {
         return Err(invalid("workspace contains duplicate identifiers"));
     }
@@ -1889,6 +2341,14 @@ fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
             scrollback: terminal.scrollback,
             encoding: terminal.encoding,
             keymap: terminal.keymap,
+        })?;
+    }
+    for snippet in &snapshot.snippets {
+        validate_snippet_input(&SnippetInput {
+            name: snippet.name.clone(),
+            tags: snippet.tags.clone(),
+            template: snippet.template.clone(),
+            parameters: snippet.parameters.clone(),
         })?;
     }
     Ok(())
@@ -1953,6 +2413,7 @@ fn import_summary(snapshot: &WorkspaceSnapshot) -> ImportSummary {
         connections: snapshot.connections.len(),
         proxies: snapshot.proxies.len(),
         terminal_profiles: snapshot.terminal_profiles.len(),
+        snippets: snapshot.snippets.len(),
     }
 }
 
@@ -2326,5 +2787,123 @@ mod tests {
         assert_eq!(restored.imported.folders, 1);
         assert!(paths.recovery.join(restored.recovery_file_name).is_file());
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn encrypted_snippets_and_history_should_validate_render_and_restore()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let service = WorkspaceService::open(
+            WorkspacePaths::under(directory.path()),
+            Duration::from_secs(300),
+            Arc::new(MemoryKeyStore::default()),
+        )
+        .await?;
+        let initialized = service
+            .initialize("a durable recovery password".to_owned())
+            .await?;
+        let connection = service
+            .create_connection(ConnectionInput {
+                folder_id: None,
+                sort_order: 0,
+                kind: ConnectionKind::Ssh,
+                name: "Snippet target".to_owned(),
+                host: "server.internal".to_owned(),
+                port: 22,
+                username: "operator".to_owned(),
+                proxy_id: None,
+                jump_host_ids: Vec::new(),
+                terminal_profile_id: Some(initialized.terminal_profiles[0].id),
+                authentication: SshAuthenticationKind::Agent,
+                private_key_path: String::new(),
+                allow_legacy_algorithms: false,
+                openssh_fallback: false,
+                tags: Vec::new(),
+                notes: String::new(),
+            })
+            .await?;
+
+        let undeclared = service
+            .create_snippet(SnippetInput {
+                name: "Invalid".to_owned(),
+                tags: Vec::new(),
+                template: "ping {{host}} {{missing}}".to_owned(),
+                parameters: vec![snippet_parameter("host", SnippetParameterKind::Host)],
+            })
+            .await
+            .expect_err("undeclared placeholders must fail closed");
+        assert_eq!(undeclared.code, ErrorCode::InvalidInput);
+
+        let snippet = service
+            .create_snippet(SnippetInput {
+                name: "Bounded ping".to_owned(),
+                tags: vec!["network".to_owned(), "diagnostic".to_owned()],
+                template: "ping -c {{count}} {{host}}".to_owned(),
+                parameters: vec![
+                    snippet_parameter("count", SnippetParameterKind::Integer),
+                    snippet_parameter("host", SnippetParameterKind::Host),
+                ],
+            })
+            .await?;
+        let rendered = service
+            .render_snippet(
+                snippet.id,
+                BTreeMap::from([
+                    ("count".to_owned(), "4".to_owned()),
+                    ("host".to_owned(), "example.internal".to_owned()),
+                ]),
+            )
+            .await?;
+        assert_eq!(rendered, "ping -c 4 example.internal");
+        assert!(
+            service
+                .render_snippet(
+                    snippet.id,
+                    BTreeMap::from([
+                        ("count".to_owned(), "4".to_owned()),
+                        ("host".to_owned(), "example.internal; reboot".to_owned()),
+                    ]),
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            service.search("diagnostic", 10)?[0].id,
+            snippet.id.to_string()
+        );
+
+        for index in 0..505 {
+            service
+                .record_command(connection.id, format!("echo history-{index}"))
+                .await?;
+        }
+        assert_eq!(
+            service
+                .command_history(Some(connection.id), 500)
+                .await?
+                .len(),
+            500
+        );
+        service.lock()?;
+        let recovered = service
+            .recover("a durable recovery password".to_owned())
+            .await?;
+        assert_eq!(recovered.snippets, vec![snippet]);
+        let history = service.command_history(Some(connection.id), 500).await?;
+        assert_eq!(history.len(), 500);
+        assert_eq!(history[0].command, "echo history-504");
+        assert_eq!(history[499].command, "echo history-5");
+        Ok(())
+    }
+
+    fn snippet_parameter(name: &str, kind: SnippetParameterKind) -> SnippetParameter {
+        SnippetParameter {
+            name: name.to_owned(),
+            label: name.to_owned(),
+            kind,
+            required: true,
+            default_value: String::new(),
+            choices: Vec::new(),
+        }
     }
 }

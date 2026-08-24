@@ -3,15 +3,17 @@
 // Tauri commands deserialize owned arguments at the IPC boundary.
 #![allow(clippy::needless_pass_by_value)]
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use firstshell_application::{
     ExportReceipt, ImportSummary, RestoreReceipt, VaultStatus, WorkspaceService,
 };
 use firstshell_domain::{
-    ConnectionId, ConnectionInput, ConnectionProfile, ErrorCode, Folder, FolderId, FolderInput,
-    ProxyId, ProxyInput, ProxyProfile, PublicError, SearchResult, TerminalProfile,
-    TerminalProfileId, TerminalProfileInput, WorkspaceLayout, WorkspaceSnapshot,
+    CommandHistoryEntry, ConnectionId, ConnectionInput, ConnectionProfile, ErrorCode, Folder,
+    FolderId, FolderInput, ProxyId, ProxyInput, ProxyProfile, PublicError, SearchResult, Snippet,
+    SnippetId, SnippetInput, TerminalProfile, TerminalProfileId, TerminalProfileInput,
+    WorkspaceLayout, WorkspaceSnapshot,
 };
 use tauri::{State, WebviewWindow};
 
@@ -23,6 +25,8 @@ pub struct DesktopState {
     pub sessions: Arc<crate::session_commands::DesktopSessions>,
     /// Rooted SFTP, transfer, and tunnel runtimes.
     pub operations: Arc<crate::transfer_commands::DesktopOperations>,
+    /// Agentless monitoring and bounded efficiency-tool runtimes.
+    pub tools: Arc<crate::m4_commands::DesktopTools>,
 }
 
 fn authorize_window_label(label: &str) -> Result<(), PublicError> {
@@ -85,6 +89,8 @@ pub async fn lock_vault(
 ) -> Result<(), PublicError> {
     authorize(&window)?;
     state.sessions.close_all().await;
+    state.operations.close_all().await;
+    state.tools.close_all().await;
     state.workspace.lock()
 }
 
@@ -270,6 +276,84 @@ pub async fn delete_terminal_profile(
         .workspace
         .delete_terminal_profile(id, expected_revision)
         .await
+}
+
+#[tauri::command]
+pub async fn create_snippet(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: SnippetInput,
+) -> Result<Snippet, PublicError> {
+    authorize(&window)?;
+    state.workspace.create_snippet(input).await
+}
+
+#[tauri::command]
+pub async fn update_snippet(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    id: SnippetId,
+    expected_revision: u64,
+    input: SnippetInput,
+) -> Result<Snippet, PublicError> {
+    authorize(&window)?;
+    state
+        .workspace
+        .update_snippet(id, expected_revision, input)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_snippet(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    id: SnippetId,
+    expected_revision: u64,
+) -> Result<(), PublicError> {
+    authorize(&window)?;
+    state.workspace.delete_snippet(id, expected_revision).await
+}
+
+#[tauri::command]
+pub async fn render_snippet(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    id: SnippetId,
+    values: BTreeMap<String, String>,
+) -> Result<String, PublicError> {
+    authorize(&window)?;
+    state.workspace.render_snippet(id, values).await
+}
+
+#[tauri::command]
+pub async fn record_command_history(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    connection_id: ConnectionId,
+    command: String,
+) -> Result<CommandHistoryEntry, PublicError> {
+    authorize(&window)?;
+    state.workspace.record_command(connection_id, command).await
+}
+
+#[tauri::command]
+pub async fn list_command_history(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    connection_id: Option<ConnectionId>,
+    limit: usize,
+) -> Result<Vec<CommandHistoryEntry>, PublicError> {
+    authorize(&window)?;
+    state.workspace.command_history(connection_id, limit).await
+}
+
+#[tauri::command]
+pub async fn clear_command_history(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), PublicError> {
+    authorize(&window)?;
+    state.workspace.clear_command_history().await
 }
 
 #[tauri::command]

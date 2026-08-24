@@ -1,15 +1,17 @@
 //! Secure `russh` terminal transport with strict host-key verification.
 
 mod connector;
+mod monitor;
 mod sftp;
 mod tunnel;
 
 pub use connector::{
     BoxedStream, ConnectTarget, Connector, ConnectorError, ProxyDnsMode, ProxyEndpoint, ProxyRoute,
 };
+pub use monitor::{ProbeError, ProbeKind, ProbeMetric, ProbeResult, ProbeRow, ProbeSession};
 pub use sftp::{
-    ConflictPolicy, RemoteEntry, RemoteEntryKind, SftpError, SftpWorkspace, TransferOptions,
-    TransferProgress, TransferReceipt, VerifyMode,
+    ArchiveReceipt, ConflictPolicy, RemoteEditDocument, RemoteEntry, RemoteEntryKind, SftpError,
+    SftpWorkspace, TransferOptions, TransferProgress, TransferReceipt, VerifyMode,
 };
 pub use tunnel::{RunningTunnel, TunnelError, TunnelKind, TunnelSnapshot, TunnelSpec};
 

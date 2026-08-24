@@ -1,7 +1,7 @@
 # M3 补充验收记录
 
 - 验收日期：2026-08-24
-- 基线提交：`574847b`（M3 已验收提交；本补充为未提交工作区变更）
+- 基线提交：`574847b`；补充已提交为 `179aa3b`
 - 参考平台：Windows，Rust 1.89.0 stable，Node.js 24
 - 范围：SSH companion SFTP、紧凑文件工作区、启动快速解锁、终端预设与自定义调色板
 
@@ -65,5 +65,5 @@ git diff --check
 - Solarized、Nord、Dracula 和 One Dark 的上游为 MIT；发布 NOTICE 仍须保留相应声明。
 - 按项目负责人 2026-08-24 的决定，Gruvbox 在开发阶段作为显式例外保留，不阻塞当前依赖门禁。其许可状态仍为“待确认”，不能据此发布；M7 发布前必须取得明确授权或移除该预设，代码中保留 `TODO(M7 licensing)`。
 - 自动快速解锁只在 OS keyring 内已有有效设备密钥时成功；keyring 不可用、条目缺失或密钥无效时回落到恢复口令，不绕过恢复能力。
-- 视觉证据运行于浏览器中的同一 React/Vite 资源。安装后 WebView2、真实 SSH/SFTP 服务器、系统 keyring 异常和窗口管理器交互仍属于 M4 后统一实机验收边界。
+- 视觉证据运行于浏览器中的同一 React/Vite 资源。项目负责人于 2026-08-24 决定跳过安装后 WebView2、真实 SSH/SFTP、系统 keyring 异常和窗口管理器人工验收；这些项目仍未通过并移入 M7。
 - 本补充没有改变 SQLite schema、SSH/SFTP 协议或 M3 已记录的传输性能基线，因此不重复执行 M3 Release 吞吐基准。

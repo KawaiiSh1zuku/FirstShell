@@ -39,7 +39,7 @@ crates/
   domain/                  纯领域类型与不变量
   application/             用例编排、端口 trait
   session/                 会话 actor、状态机、资源调度
-  ssh/                     SSH、SFTP、代理、跳板与隧道
+  ssh/                     SSH、SFTP、agentless 探针、代理、跳板与隧道
   storage/                 SQLite actor、迁移、备份
   security/                密钥、加密、known_hosts 与脱敏
   sync-protocol/           端到端密文同步协议
@@ -105,6 +105,8 @@ M3 的 `DesktopOperations` 独立持有 SFTP、传输、隧道和拖放暂存注
 
 M3 补充的 companion coordinator 订阅每个持久化 SSH connection 的 ready pane 计数：首个 pane ready 后创建一个独立 SFTP workspace，同连接多分屏共享，最后一个 pane 退出后关闭。Operations 视觉折叠时组件仍挂载以维护生命周期；WebView 只保存 workspace ID 和公开快照，Rust 继续拥有认证、host key、rooted path 与关闭资源。自动 SFTP 失败与终端状态隔离。完整取舍见 [ADR-0007](./adr/0007-m3-companion-sftp-and-terminal-themes.md)。
 
+M4 的 `DesktopTools` 独立持有最多 16 个周期监控，每个监控使用一条认证低优先级 SSH 连接和 300 点 `VecDeque`；事件只含版本化 sample、状态和稳定 diagnostic。Vault 锁定取消全部 monitor。session registry 的广播在持有注册表锁时先校验完整 target set 与队列容量，再统一入队；WebView 的 ready session ID 不赋予任意会话控制权。`DesktopOperations` 继续拥有远程编辑、压缩和 ZMODEM 生命周期，ZMODEM 复用 256 项/2 并发队列。完整取舍见 [ADR-0008](./adr/0008-m4-agentless-tools.md)。
+
 Tauri capability 按窗口标签和命令最小授权；不暴露通用 shell、任意文件系统或任意 HTTP API。
 
 ## 主要 UI 信息架构
@@ -124,13 +126,15 @@ M2 中央工作区支持多标签和每标签最多四个独立分屏，分屏�
 
 M3 将底部面板扩展为独立动态加载的 Operations 工作区，包含 rooted SFTP、远程文件操作、传输队列和本地/远程/动态隧道。补充布局将默认高度调为 260 logical px，并使用单行地址/操作栏、左侧懒加载目录树和右侧文件表；传输策略进入弹出菜单，根外地址和 `..` 跳转在前端与 Rust 两层拒绝。窄视口保持页面无横向溢出，Operations 与终端分别形成独立 chunk，避免扩大初始入口或终端模块。
 
+M4 右侧栏通过“详情/工具”切换保留会话属性，同时动态加载监控、片段、历史和广播四个工具页。监控 scalar 用小型趋势条展示，process/port/ping/traceroute 使用有界行表；片段编辑与插入分离，广播的 target 与确认状态可见。底部 Operations 在同一 rooted SFTP 工具栏加入远程文本编辑器、`.tar.gz` 打包和 ZMODEM。`ToolsWorkspace`、`OperationsWorkspace` 与 `TerminalWorkspace` 是三个独立 chunk，片段/监控不会进入 xterm 包。
+
 应用外观提供浅色、深色和跟随系统三态切换，使用语义颜色 token 保持两套配色下的层级、焦点与错误状态一致。该非敏感偏好由前端本地保存并可在 Vault 锁定页切换；终端配色仍由加密 terminal profile 独立管理。M3 补充提供 FirstShell、Solarized、Nord、Dracula、Gruvbox、One Dark、High Contrast 预设和完整自定义 ANSI palette，不能把应用外观主题误作终端主题。
 
 ## 文件、监控与远程桌面
 
-M3 SFTP 工作区先规范化服务器返回的 canonical root，此后所有路径都必须是根内相对路径；目录父链和目标使用 `lstat`/canonicalize 双重检查，符号链接只展示目标而不隐式跟随。上传写入同目录 `.firstshell-part`，下载写入本地同目录 partial；取消或暂停保留安全 partial，恢复从已确认长度继续，可选大小或 SHA-256 校验。`russh-sftp 2.4` 未封装 OpenSSH `posix-rename` 扩展，因此新文件使用同目录 rename，覆盖既有文件时需先删除旧文件再 rename，存在极短替换窗口；在线远程编辑仍在 M4 通过版本指纹处理冲突。
+M3 SFTP 工作区先规范化服务器返回的 canonical root，此后所有路径都必须是根内相对路径；目录父链和目标使用 `lstat`/canonicalize 双重检查，符号链接只展示目标而不隐式跟随。上传写入同目录 `.firstshell-part`，下载写入本地同目录 partial；取消或暂停保留安全 partial，恢复从已确认长度继续，可选大小或 SHA-256 校验。`russh-sftp 2.4` 未封装 OpenSSH `posix-rename` 扩展，因此新文件使用同目录 rename，覆盖既有文件时需先删除旧文件再 rename，存在极短替换窗口。M4 编辑器用两次 SHA-256 指纹检查阻止静默覆盖；压缩和 ZMODEM 也只接受 root 内路径，状态与本地路径不持久化。
 
-主机监控首期采用 agentless 探针，优先读取 `/proc`、`/sys` 和稳定系统命令，输出版本化结构。探针必须有超时、输出上限和受控命令模板，禁止拼接未经验证的 shell 文本。
+主机监控采用 agentless 固定模板读取 Linux `/proc`、`df`、`ps`、`ss`、`ping` 和 `traceroute`，输出 schema version 1 的 metrics/rows/diagnostic。每次命令限时 8 秒、输出 512 KiB，表格与控制字符在 Rust 解析；连续三次失败进入 degraded，后续成功恢复。历史只在 Rust 保留 300 点，请求 1–300 点时按端点均匀降采样后进入 WebView。
 
 RDP 由隔离的原生 helper 承载，通过带版本和认证的本地 IPC 与桌面端通信。helper 崩溃不能拖垮 SSH/SFTP 主进程，也不能读取仓库主密钥。
 
