@@ -115,18 +115,18 @@ Tauri capability 按窗口标签和命令最小授权；不暴露通用 shell、
 
 | 区域 | 默认职责 |
 | --- | --- |
-| 左侧栏 | 连接树、分组、标签、搜索和快速连接 |
+| 左侧栏 | 可收起的连接树、分组、标签、搜索和快速连接 |
 | 中央工作区 | 多标签、多分屏终端和远程桌面 |
-| 右侧栏 | 主机监控、代码片段、命令历史和会话属性 |
+| 右侧栏 | 当前 SSH 主机状态、代码片段、命令历史和会话属性 |
 | 底部面板 | SFTP 文件管理器、传输队列、问题与任务状态 |
 
-面板可折叠、调整大小并保存工作区，但重要状态不能只靠颜色表达。终端和文件传输在面板隐藏后仍继续运行，关闭会话时必须明确提示仍在运行的任务。
+面板可折叠、调整大小并保存工作区，但重要状态不能只靠颜色表达。左侧连接栏的展开状态与宽度一并写入加密 `ui_state`，旧布局缺少该字段时默认展开；折叠只改变展示，不关闭终端或后台任务。终端和文件传输在面板隐藏后仍继续运行，关闭会话时必须明确提示仍在运行的任务。
 
 M2 中央工作区支持多标签和每标签最多四个独立分屏，分屏方向可按行或列切换；窄于 760 px 时列分屏自动改为纵向排列。每个 pane 独立管理 xterm、尺寸同步、host key 确认、重连与日志状态，终端模块动态加载以避免扩大主入口包。
 
 M3 将底部面板扩展为独立动态加载的 Operations 工作区，包含 rooted SFTP、远程文件操作、传输队列和本地/远程/动态隧道。补充布局将默认高度调为 260 logical px，并使用单行地址/操作栏、左侧懒加载目录树和右侧文件表；传输策略进入弹出菜单，根外地址和 `..` 跳转在前端与 Rust 两层拒绝。窄视口保持页面无横向溢出，Operations 与终端分别形成独立 chunk，避免扩大初始入口或终端模块。
 
-M4 右侧栏通过“详情/工具”切换保留会话属性，同时动态加载监控、片段、历史和广播四个工具页。监控 scalar 用小型趋势条展示，process/port/ping/traceroute 使用有界行表；片段编辑与插入分离，广播的 target 与确认状态可见。底部 Operations 在同一 rooted SFTP 工具栏加入远程文本编辑器、`.tar.gz` 打包和 ZMODEM。`ToolsWorkspace`、`OperationsWorkspace` 与 `TerminalWorkspace` 是三个独立 chunk，片段/监控不会进入 xterm 包。
+M4 右侧栏通过“详情/工具”切换保留会话属性。持久 SSH 终端进入 Ready 后，应用自动复用既有 agentless monitor 管理器创建独立低优先级 SSH 连接；详情页直接展示 CPU、内存、SWAP、1 分钟负载、可切换网卡的收发速率和磁盘容量，终端断开或 Vault 锁定时停止对应监控。工具页继续动态加载手动监控、process/port/ping/traceroute、片段、历史和广播，便于诊断而不改变自动摘要生命周期；片段编辑与插入分离，广播的 target 与确认状态可见。底部 Operations 在同一 rooted SFTP 工具栏加入远程文本编辑器、`.tar.gz` 打包和 ZMODEM。`ToolsWorkspace`、`OperationsWorkspace` 与 `TerminalWorkspace` 是三个独立 chunk，片段/监控不会进入 xterm 包。
 
 应用外观提供浅色、深色和跟随系统三态切换，使用语义颜色 token 保持两套配色下的层级、焦点与错误状态一致。该非敏感偏好由前端本地保存并可在 Vault 锁定页切换；终端配色仍由加密 terminal profile 独立管理。M3 补充提供 FirstShell、Solarized、Nord、Dracula、Gruvbox、One Dark、High Contrast 预设和完整自定义 ANSI palette，不能把应用外观主题误作终端主题。
 
@@ -134,7 +134,7 @@ M4 右侧栏通过“详情/工具”切换保留会话属性，同时动态加�
 
 M3 SFTP 工作区先规范化服务器返回的 canonical root，此后所有路径都必须是根内相对路径；目录父链和目标使用 `lstat`/canonicalize 双重检查，符号链接只展示目标而不隐式跟随。上传写入同目录 `.firstshell-part`，下载写入本地同目录 partial；取消或暂停保留安全 partial，恢复从已确认长度继续，可选大小或 SHA-256 校验。`russh-sftp 2.4` 未封装 OpenSSH `posix-rename` 扩展，因此新文件使用同目录 rename，覆盖既有文件时需先删除旧文件再 rename，存在极短替换窗口。M4 编辑器用两次 SHA-256 指纹检查阻止静默覆盖；压缩和 ZMODEM 也只接受 root 内路径，状态与本地路径不持久化。
 
-主机监控采用 agentless 固定模板读取 Linux `/proc`、`df`、`ps`、`ss`、`ping` 和 `traceroute`，输出 schema version 1 的 metrics/rows/diagnostic。每次命令限时 8 秒、输出 512 KiB，表格与控制字符在 Rust 解析；连续三次失败进入 degraded，后续成功恢复。历史只在 Rust 保留 300 点，请求 1–300 点时按端点均匀降采样后进入 WebView。
+主机监控采用 agentless 固定模板读取 Linux `/proc`、`df`、`ps`、`ss`、`ping` 和 `traceroute`，输出 schema version 1 的 metrics/rows/diagnostic。host metrics 同时返回 CPU 累计计数、内存与 SWAP 字节数、1 分钟负载、各网卡累计字节和各挂载点容量；前端只基于相邻采样计算 CPU 占用与网速，不向远端注入动态命令。每次命令限时 8 秒、输出 512 KiB，表格与控制字符在 Rust 解析；连续三次失败进入 degraded，后续成功恢复。历史只在 Rust 保留 300 点，请求 1–300 点时按端点均匀降采样后进入 WebView。
 
 RDP 由隔离的原生 helper 承载，通过带版本和认证的本地 IPC 与桌面端通信。helper 崩溃不能拖垮 SSH/SFTP 主进程，也不能读取仓库主密钥。
 

@@ -501,6 +501,9 @@ pub struct WorkspaceSnapshot {
 pub struct WorkspaceLayout {
     /// Left connection-tree width.
     pub left_width: u16,
+    /// Whether the left connection tree is expanded.
+    #[serde(default = "default_panel_open")]
+    pub left_open: bool,
     /// Right inspector width.
     pub right_width: u16,
     /// Bottom activity panel height.
@@ -513,11 +516,16 @@ impl Default for WorkspaceLayout {
     fn default() -> Self {
         Self {
             left_width: 256,
+            left_open: true,
             right_width: 288,
             bottom_height: 260,
             bottom_open: true,
         }
     }
+}
+
+const fn default_panel_open() -> bool {
+    true
 }
 
 /// Search result category.
@@ -646,5 +654,14 @@ mod tests {
         assert_eq!(terminal.encoding, TerminalEncoding::Utf8);
         assert_eq!(terminal.keymap, TerminalKeymap::Xterm);
         assert!(terminal.palette.is_none());
+
+        let layout: WorkspaceLayout = serde_json::from_value(serde_json::json!({
+            "leftWidth": 256,
+            "rightWidth": 288,
+            "bottomHeight": 260,
+            "bottomOpen": true
+        }))
+        .expect("older workspace layouts should remain readable");
+        assert!(layout.left_open);
     }
 }

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPreviewBridge } from "./bridge";
@@ -6,7 +6,7 @@ import { App } from "./main";
 import type { VaultStatus } from "./types";
 
 vi.mock("./TerminalWorkspace", () => ({
-  TerminalWorkspace: ({ insertRequest }: { insertRequest?: { sequence: number } | null }) => <div data-testid="terminal-workspace"><span data-testid="insert-sequence">{insertRequest?.sequence ?? "none"}</span></div>,
+  TerminalWorkspace: ({ insertRequest, onReadyConnectionsChange }: { insertRequest?: { sequence: number } | null; onReadyConnectionsChange(ids: string[]): void }) => <div data-testid="terminal-workspace"><span data-testid="insert-sequence">{insertRequest?.sequence ?? "none"}</span><button type="button" onClick={() => onReadyConnectionsChange(["connection-edge"])}>模拟终端就绪</button><button type="button" onClick={() => onReadyConnectionsChange([])}>模拟终端断开</button></div>,
 }));
 
 vi.mock("./ToolsWorkspace", async () => {
@@ -130,6 +130,70 @@ describe("M1 workspace accessibility and vault state", () => {
     await user.click(screen.getByRole("button", { name: "锁定仓库" }));
     expect(await screen.findByText("本地仓库已锁定")).toBeTruthy();
     expect(screen.queryByText("Edge Gateway")).toBeNull();
+  });
+
+  it("collapses the connection panel and persists the layout preference", async () => {
+    const bridge = createPreviewBridge();
+    const saveLayout = vi.fn(bridge.saveLayout);
+    bridge.saveLayout = saveLayout;
+    const user = userEvent.setup();
+    render(<App bridge={bridge} />);
+
+    expect(await screen.findByRole("tree", { name: "连接树" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "收起连接栏" }));
+    await waitFor(() => expect(screen.queryByRole("tree", { name: "连接树" })).toBeNull());
+    expect(screen.queryByRole("separator", { name: "调整连接面板宽度" })).toBeNull();
+    expect(screen.getByRole("separator", { name: "调整详情面板宽度" }).classList.contains("right-resize")).toBe(true);
+    expect(saveLayout).toHaveBeenCalledWith(expect.objectContaining({ leftOpen: false }));
+
+    await user.click(screen.getByRole("button", { name: "展开连接栏" }));
+    expect(await screen.findByRole("tree", { name: "连接树" })).toBeTruthy();
+    expect(saveLayout).toHaveBeenCalledWith(expect.objectContaining({ leftOpen: true }));
+  });
+
+  it("starts and stops host monitoring with a ready SSH terminal", async () => {
+    const bridge = createPreviewBridge();
+    const startHostMonitor = vi.fn(bridge.startHostMonitor);
+    const stopHostMonitor = vi.fn(bridge.stopHostMonitor);
+    bridge.startHostMonitor = startHostMonitor;
+    bridge.stopHostMonitor = stopHostMonitor;
+    const user = userEvent.setup();
+    render(<App bridge={bridge} />);
+
+    await user.click(await screen.findByRole("treeitem", { name: /^Edge Gateway/ }));
+    expect(screen.getByText("终端连接后自动启动低开销监控")).toBeTruthy();
+    await user.click(await screen.findByRole("button", { name: "模拟终端就绪" }));
+
+    await waitFor(() => expect(startHostMonitor).toHaveBeenCalledWith("connection-edge", 5, expect.any(Function)));
+    expect(await screen.findByText("监控中")).toBeTruthy();
+    expect(screen.getByText("CPU")).toBeTruthy();
+    expect(screen.getByText("内存")).toBeTruthy();
+    expect(screen.getByText("SWAP")).toBeTruthy();
+    expect(screen.getByText("1 分钟负载")).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "监控网卡" }) as HTMLSelectElement).value).toBe("eth0");
+    expect(screen.getByText("磁盘容量")).toBeTruthy();
+
+    const onMonitorEvent = startHostMonitor.mock.calls[0][2];
+    const sample = (capturedAtMs: number, eth0: [string, string], loopback: [string, string]) => ({
+      version: 1,
+      probe: { type: "host_metrics" as const },
+      capturedAtMs,
+      exitCode: 0,
+      metrics: [{ key: "cpu_used", value: 20, unit: "percent" }],
+      rows: [{ kind: "network", cells: ["eth0", ...eth0] }, { kind: "network", cells: ["lo", ...loopback] }],
+      diagnostic: null,
+    });
+    act(() => {
+      onMonitorEvent({ monitorId: "monitor-preview", state: "running", sample: sample(10_000, ["1000", "2000"], ["10", "20"]), diagnostic: null });
+      onMonitorEvent({ monitorId: "monitor-preview", state: "running", sample: sample(15_000, ["6120", "7120"], ["1034", "2068"]), diagnostic: null });
+    });
+    expect(screen.getAllByText("1.0 KiB/s")).toHaveLength(2);
+    await user.selectOptions(screen.getByRole("combobox", { name: "监控网卡" }), "lo");
+    expect(screen.getByText("205 B/s")).toBeTruthy();
+    expect(screen.getByText("410 B/s")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "模拟终端断开" }));
+    await waitFor(() => expect(stopHostMonitor).toHaveBeenCalled());
   });
 
   it("restores a deleted tree item through the revision-checked undo action", async () => {

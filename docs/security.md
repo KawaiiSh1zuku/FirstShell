@@ -86,7 +86,7 @@ M3 的 SOCKS5/HTTP CONNECT 代理密码采用独立 keyring 项，协议错误�
 
 companion SFTP 只在持久化 SSH connection 的终端 ready 后触发，失败不改变终端状态。同连接多 pane 共享一个 SFTP workspace；用户关闭、最后一个 pane 退出、Vault 锁定或应用退出都会回收。可输入地址栏先拒绝 canonical root 外绝对地址和 `..`，Rust `SftpWorkspace` 仍执行最终 rooted path 与 symlink 检查。
 
-M4 监控只接受固定 host/process/port/ping/traceroute 模板。ping/traceroute target 拒绝 shell 元字符、空白和 `-` 起始的 option smuggling；探针限时 8 秒、输出 512 KiB，并在 Rust 侧清除控制字符、限制行列后才形成 DTO。每个周期监控使用独立低优先级 SSH 连接、最多 16 个、300 点环形缓冲；监控返回内容不会再次拼入 shell，也不进入数据库。
+M4 监控只接受固定 host/process/port/ping/traceroute 模板。ping/traceroute target 拒绝 shell 元字符、空白和 `-` 起始的 option smuggling；探针限时 8 秒、输出 512 KiB，并在 Rust 侧清除控制字符、限制行列后才形成 DTO。持久 SSH 终端 Ready 后自动启动详情监控，快速连接不参与；终端断开、Vault 锁定或应用退出会取消对应任务。每个周期监控使用独立低优先级 SSH 连接、最多 16 个、300 点环形缓冲；监控返回内容不会再次拼入 shell，也不进入数据库。
 
 代码片段声明的 placeholder 必须与类型化参数完全一致。Rust 对 text、integer、choice、host 和 path 分别验证长度、控制字符和允许值，渲染结果仍限单行；默认动作只插入活动终端，不附加 Enter。命令/路径历史仅在用户输入 Enter 后记录，控制序列不进入历史，最多加密保留 500 项并可清除。
 

@@ -180,7 +180,7 @@ fn probe_command(probe: &ProbeKind) -> Result<String, ProbeError> {
             "LC_ALL=C sh -c '",
             "printf \"FS1\\n\"; ",
             "awk '\"'\"'/^cpu /{t=0; for(i=2;i<=NF;i++)t+=$i; print \"metric cpu_total count \"t; print \"metric cpu_idle count \"$5+$6}'\"'\"' /proc/stat 2>/dev/null; ",
-            "awk '\"'\"'/^MemTotal:/{print \"metric memory_total bytes \"$2*1024}/^MemAvailable:/{print \"metric memory_available bytes \"$2*1024}'\"'\"' /proc/meminfo 2>/dev/null; ",
+            "awk '\"'\"'/^MemTotal:/{print \"metric memory_total bytes \"$2*1024}/^MemAvailable:/{print \"metric memory_available bytes \"$2*1024}/^SwapTotal:/{print \"metric swap_total bytes \"$2*1024}/^SwapFree:/{print \"metric swap_free bytes \"$2*1024}'\"'\"' /proc/meminfo 2>/dev/null; ",
             "awk '\"'\"'{print \"metric load_1m count \"$1}'\"'\"' /proc/loadavg 2>/dev/null; ",
             "df -Pk 2>/dev/null | awk '\"'\"'NR>1 && n++<32 {print \"row disk\\t\"$6\"\\t\"$2*1024\"\\t\"$4*1024}'\"'\"'; ",
             "awk '\"'\"'NR>2 && n++<32 {gsub(/:/,\"\",$1); print \"row network\\t\"$1\"\\t\"$2\"\\t\"$10}'\"'\"' /proc/net/dev 2>/dev/null'"
@@ -342,11 +342,13 @@ mod tests {
     fn parser_emits_versioned_bounded_sanitized_values() {
         let result = parse_probe(
             ProbeKind::HostMetrics,
-            b"FS1\nmetric cpu_total count 100\nrow disk\t/\t4096\t2048\x1b\n",
+            b"FS1\nmetric cpu_total count 100\nmetric swap_total bytes 4096\nmetric swap_free bytes 2048\nrow disk\t/\t4096\t2048\x1b\n",
             Some(0),
         );
         assert_eq!(result.version, 1);
         assert_eq!(result.metrics[0].key, "cpu_total");
+        assert_eq!(result.metrics[1].key, "swap_total");
+        assert_eq!(result.metrics[2].key, "swap_free");
         assert_eq!(result.rows[0].cells, ["/", "4096", "2048"]);
         assert_eq!(result.diagnostic, None);
     }

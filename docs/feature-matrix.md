@@ -25,7 +25,7 @@ M1 基础工作区、M2 SSH 终端、M3 SFTP/复杂网络和 M4 主机监控/效
 | 连接配置 CRUD | M1 | Verified | SSH/RDP/本地类型清晰，修改事务化 |
 | 文件夹、排序、标签与搜索 | M1 | Verified | 密文名称可在解锁态搜索，树操作可撤销 |
 | 本地加密仓库 | M1 | Verified | OS keyring、自动锁定、损坏恢复 |
-| 多工作区布局持久化 | M1 | Verified | 面板与标签恢复不泄露锁定数据 |
+| 多工作区布局持久化 | M1/M4 补充 | Verified | 左侧连接栏可收起并加密保存，旧布局默认展开，不泄露锁定数据 |
 | 加密导入、导出与备份 | M1 | Verified | 独立导出口令、完整性验证、事务恢复 |
 | 快速连接 | M2 | Verified | 临时连接不被意外持久化 |
 
@@ -66,7 +66,7 @@ M1 基础工作区、M2 SSH 终端、M3 SFTP/复杂网络和 M4 主机监控/效
 
 | 能力 | 目标 | 状态 | 验收重点 |
 | --- | --- | --- | --- |
-| CPU、内存、磁盘、网络监控 | M4 | Verified | agentless、独立 SSH 连接、8 秒超时、300 点环形缓冲 |
+| CPU、内存、SWAP、负载、磁盘、网络监控 | M4 | Verified | SSH Ready 后自动启动并显示在详情页，可切换网卡；agentless 独立连接、8 秒超时、300 点环形缓冲 |
 | 进程与监听端口视图 | M4 | Verified | 512 KiB 输出上限、版本化行表、权限不足可诊断 |
 | Ping 与 traceroute | M4 | Verified | 固定模板、target 注入拒绝、取消和目标速率上限 |
 | 代码片段分组、标签与搜索 | M4 | Verified | Vault 加密记录、标签搜索与 revision 冲突 |

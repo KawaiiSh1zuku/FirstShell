@@ -2721,6 +2721,7 @@ mod tests {
 
         let layout = WorkspaceLayout {
             left_width: 300,
+            left_open: true,
             right_width: 320,
             bottom_height: 210,
             bottom_open: false,

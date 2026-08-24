@@ -67,7 +67,7 @@ M3 仍不改变 schema version 2。连接加密 payload 增加有序 `jumpHostId
 
 M3 补充继续保持 schema version 2。terminal profile 加密 payload 增加可选 `palette`；旧记录缺少该字段时按 `None` 读取。`theme=custom` 必须携带完整的前景、背景、光标、选区与 16 个 ANSI `#RRGGBB` 颜色；其他预设只保存稳定 ID 并拒绝冗余 palette。companion SFTP 的 workspace ID、目录缓存和自动抑制状态仍为进程内状态，不写入 SQLite。
 
-M4 migration 3 新增 `snippets` 与 `efficiency_state`。片段的名称、标签、模板和参数整体使用记录级 AEAD；更新与软删除继续受 expected revision 约束。历史按 workspace 聚合在单个密文 payload 中，写入前去重并截断到最近 500 项；查询可按 connection ID 过滤且最多返回请求上限。portable export/import 包含片段，命令历史作为本机效率状态不进入 portable snapshot。监控 300 点环形缓冲、probe diagnostic、广播目标、远程编辑器内容和 ZMODEM/传输状态全部留在进程内。
+M4 migration 3 新增 `snippets` 与 `efficiency_state`。片段的名称、标签、模板和参数整体使用记录级 AEAD；更新与软删除继续受 expected revision 约束。历史按 workspace 聚合在单个密文 payload 中，写入前去重并截断到最近 500 项；查询可按 connection ID 过滤且最多返回请求上限。portable export/import 包含片段，命令历史作为本机效率状态不进入 portable snapshot。监控 300 点环形缓冲、probe diagnostic、广播目标、远程编辑器内容和 ZMODEM/传输状态全部留在进程内。连接进入 Ready 时自动创建的详情监控同样不持久化，断开、锁定或进程退出即释放。
 
 ## 查询与搜索
 
@@ -103,4 +103,4 @@ M4 migration 3 新增 `snippets` 与 `efficiency_state`。片段的名称、标�
 
 数据库损坏、密钥环不可用或认证标签失败时不得返回部分明文或自动重建空仓库。应用应进入只读恢复流程，先保存证据副本，再引导用户从加密备份恢复。
 
-应用外观的浅色、深色和跟随系统偏好不包含敏感数据，M1 将其保存在 WebView `localStorage`，不写入 Vault 或同步对象。连接树、面板尺寸和其他可能关联工作内容的布局状态继续由加密 `ui_state` 保存。
+应用外观的浅色、深色和跟随系统偏好不包含敏感数据，M1 将其保存在 WebView `localStorage`，不写入 Vault 或同步对象。连接树、面板尺寸和其他可能关联工作内容的布局状态继续由加密 `ui_state` 保存。`WorkspaceLayout.leftOpen` 记录连接栏是否展开，serde 默认值为 `true`，因此读取旧版布局无需 schema migration。

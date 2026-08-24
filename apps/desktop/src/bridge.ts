@@ -359,6 +359,7 @@ export function createPreviewBridge(): WorkspaceBridge {
   const deletedConnections = new Map<string, ConnectionProfile>();
   let layout: WorkspaceLayout = {
     leftWidth: 256,
+    leftOpen: true,
     rightWidth: 288,
     bottomHeight: 260,
     bottomOpen: true,
@@ -604,7 +605,7 @@ export function createPreviewBridge(): WorkspaceBridge {
     closeTunnel: async (tunnelId) => { tunnels = tunnels.filter((value) => value.id !== tunnelId); },
     startHostMonitor: async (connectionId, intervalSeconds, onEvent) => {
       const id = nextId("monitor");
-      const sample: ProbeResult = { version: 1, probe: { type: "host_metrics" }, capturedAtMs: Date.now(), exitCode: 0, metrics: [{ key: "load_1m", value: 0.42, unit: "ratio" }, { key: "memory_used", value: 48, unit: "percent" }], rows: [], diagnostic: null };
+      const sample: ProbeResult = { version: 1, probe: { type: "host_metrics" }, capturedAtMs: Date.now(), exitCode: 0, metrics: [{ key: "cpu_used", value: 24, unit: "percent" }, { key: "memory_total", value: 8_589_934_592, unit: "bytes" }, { key: "memory_available", value: 4_294_967_296, unit: "bytes" }, { key: "swap_total", value: 2_147_483_648, unit: "bytes" }, { key: "swap_free", value: 1_610_612_736, unit: "bytes" }, { key: "load_1m", value: 0.42, unit: "count" }], rows: [{ kind: "network", cells: ["eth0", "1048576", "524288"] }, { kind: "network", cells: ["lo", "4096", "4096"] }, { kind: "disk", cells: ["/", "107374182400", "64424509440"] }], diagnostic: null };
       monitors.set(id, [sample]);
       queueMicrotask(() => onEvent({ monitorId: id, state: "running", sample, diagnostic: null }));
       return { id, connectionId, intervalSeconds, state: "running", sampleCount: 1, diagnostic: null, hostKey: null };

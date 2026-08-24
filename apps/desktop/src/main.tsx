@@ -14,6 +14,8 @@ import {
   Lock,
   Monitor,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Search,
   Server,
@@ -27,6 +29,7 @@ import {
 import { BackupDialog } from "./BackupDialog";
 import { workspaceBridge, type WorkspaceBridge } from "./bridge";
 import { EntityDialog } from "./EntityDialog";
+import { HostMonitorPanel, useAutomaticHostMonitors, type AutoMonitorView } from "./HostMonitorPanel";
 import { SettingsDialog } from "./SettingsDialog";
 import { QuickConnectDialog } from "./QuickConnectDialog";
 import { ThemeControl, useThemeMode } from "./ThemeControl";
@@ -102,6 +105,7 @@ type Action =
 
 const defaultLayout: WorkspaceLayout = {
   leftWidth: 256,
+  leftOpen: true,
   rightWidth: 288,
   bottomHeight: 260,
   bottomOpen: true,
@@ -175,6 +179,11 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
   const [insertRequest, setInsertRequest] = useState<TerminalInsertRequest | null>(null);
   const insertSequenceRef = useRef(0);
   const addActivity = useCallback((message: string) => dispatch({ type: "activity", message }), []);
+  const monitoredConnectionIds = useMemo(
+    () => readyConnectionIds.filter((id) => state.snapshot?.connections.some((connection) => connection.id === id && connection.kind === "ssh")),
+    [readyConnectionIds, state.snapshot?.connections],
+  );
+  const { views: monitorViews, approve: approveMonitorHostKey } = useAutomaticHostMonitors(bridge, monitoredConnectionIds, addActivity);
   const showTools = useCallback(() => {
     setToolsMounted(true);
     setRightMode("tools");
@@ -461,7 +470,8 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
   };
 
   const layoutStyle = {
-    "--left-panel": `${state.layout.leftWidth}px`,
+    "--left-panel": state.layout.leftOpen ? `${state.layout.leftWidth}px` : "0px",
+    "--left-separator": state.layout.leftOpen ? "5px" : "0px",
     "--right-panel": `${state.layout.rightWidth}px`,
     "--bottom-panel": `${state.layout.bottomHeight}px`,
   } as React.CSSProperties;
@@ -469,7 +479,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
   return (
     <main className="workspace" style={layoutStyle}>
       <header className="titlebar">
-        <div className="title-brand"><div className="mini-mark">&gt;_</div><strong>FirstShell</strong><span>本地工作区</span></div>
+        <div className="title-brand"><button className="icon-button left-panel-toggle" type="button" aria-label={state.layout.leftOpen ? "收起连接栏" : "展开连接栏"} title={state.layout.leftOpen ? "收起连接栏" : "展开连接栏"} onClick={() => void saveLayout({ ...state.layout, leftOpen: !state.layout.leftOpen })}>{state.layout.leftOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}</button><div className="mini-mark">&gt;_</div><strong>FirstShell</strong><span>本地工作区</span></div>
         <div className="title-actions">
           {!state.status.keyringAvailable && <span className="status-warning">系统密钥不可用</span>}
           <ThemeControl mode={themeMode} onChange={setThemeMode} />
@@ -480,7 +490,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         </div>
       </header>
 
-      <aside className="connections-panel" aria-label="连接">
+      {state.layout.leftOpen && <aside className="connections-panel" aria-label="连接">
         <div className="panel-header"><span>连接</span><div><button className="icon-button" type="button" aria-label="新建文件夹" title="新建文件夹" onClick={() => dispatch({ type: "patch", value: { entityDialog: { kind: "folder" }, error: null } })}><FolderPlus size={16} /></button><button className="icon-button" type="button" aria-label="新建连接" title="新建连接" onClick={() => dispatch({ type: "patch", value: { entityDialog: { kind: "connection" }, error: null } })}><Plus size={17} /></button></div></div>
         <label className="search-box"><Search size={15} aria-hidden="true" /><input aria-label="搜索工作区" placeholder="搜索" value={state.query} onChange={(event) => dispatch({ type: "patch", value: { query: event.target.value } })} /></label>
         <div className="connection-tree" role="tree" aria-label="连接树">
@@ -492,9 +502,9 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
             <TreeView snapshot={snapshot} selection={state.selection} onSelect={(selection) => dispatch({ type: "patch", value: { selection } })} onOpenConnection={openConnection} />
           )}
         </div>
-      </aside>
+      </aside>}
 
-      <PanelSeparator orientation="vertical" label="调整连接面板宽度" onPointerDown={(event) => beginResize("left", event)} onNudge={(delta) => nudgeLayout("left", delta)} />
+      {state.layout.leftOpen && <PanelSeparator orientation="vertical" area="left-resize" label="调整连接面板宽度" onPointerDown={(event) => beginResize("left", event)} onNudge={(delta) => nudgeLayout("left", delta)} />}
 
       <section className="center-stack" aria-label="工作区">
         <div className="terminal-surface">
@@ -512,11 +522,11 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         <Suspense fallback={state.layout.bottomOpen ? <section className="activity-panel"><div className="empty-list">正在加载文件与网络工具</div></section> : null}><OperationsWorkspace bridge={bridge} connections={snapshot.connections} activeConnectionId={activeConnection?.id ?? null} readyConnectionIds={readyConnectionIds} hidden={!state.layout.bottomOpen} activities={state.activities} onActivity={addActivity} onCollapse={() => void saveLayout({ ...state.layout, bottomOpen: false })} /></Suspense>
       </section>
 
-      <PanelSeparator orientation="vertical" label="调整详情面板宽度" onPointerDown={(event) => beginResize("right", event)} onNudge={(delta) => nudgeLayout("right", -delta)} />
+      <PanelSeparator orientation="vertical" area="right-resize" label="调整详情面板宽度" onPointerDown={(event) => beginResize("right", event)} onNudge={(delta) => nudgeLayout("right", -delta)} />
 
       <aside className="inspector-panel" aria-label="详情">
         <div className="panel-header tools-panel-header"><div className="panel-mode"><button type="button" aria-current={rightMode === "details"} onClick={() => setRightMode("details")}>详情</button><button type="button" aria-current={rightMode === "tools"} onClick={showTools}>工具</button></div>{rightMode === "details" && (selectedFolder || selectedConnection) && <div><button className="icon-button" type="button" aria-label="编辑所选项目" title="编辑" onClick={() => dispatch({ type: "patch", value: { entityDialog: selectedFolder ? { kind: "folder", value: selectedFolder } : { kind: "connection", value: selectedConnection }, error: null } })}><Edit3 size={15} /></button><button className="icon-button danger" type="button" aria-label="删除所选项目" title="删除" onClick={() => void deleteSelected()}><Trash2 size={15} /></button></div>}</div>
-        {rightMode === "details" && <Inspector folder={selectedFolder} connection={selectedConnection} snapshot={snapshot} />}
+        {rightMode === "details" && <Inspector folder={selectedFolder} connection={selectedConnection} snapshot={snapshot} connected={selectedConnection ? readyConnectionIds.includes(selectedConnection.id) : false} monitorView={selectedConnection ? monitorViews[selectedConnection.id] : undefined} onApproveMonitor={() => selectedConnection && void approveMonitorHostKey(selectedConnection.id)} />}
         {toolsMounted && <div className="tools-workspace-shell" hidden={rightMode !== "tools"}><Suspense fallback={<div className="empty-list">正在加载效率工具</div>}><ToolsWorkspace bridge={bridge} connections={snapshot.connections} snippets={snapshot.snippets} activeConnectionId={activeConnection?.temporary ? null : activeConnection?.id ?? null} readySessions={readySessions} onInsert={(connectionId, text) => { const openTabs = state.openTabs.includes(connectionId) ? state.openTabs : [...state.openTabs, connectionId]; dispatch({ type: "patch", value: { openTabs, activeTab: connectionId, selection: { kind: "connection", id: connectionId } } }); insertSequenceRef.current += 1; setInsertRequest({ sequence: insertSequenceRef.current, connectionId, text }); }} onRefresh={async () => { await refresh(); }} onActivity={addActivity} /></Suspense></div>}
       </aside>
 
@@ -563,14 +573,14 @@ function WorkspaceOverview({ snapshot }: { snapshot: WorkspaceSnapshot }) {
   return <div className="workspace-overview"><div className="overview-mark">&gt;_</div><h2>FirstShell</h2><div className="overview-stats"><span><Server size={16} />{snapshot.connections.length} 连接</span><span><FolderIcon size={16} />{snapshot.folders.length} 文件夹</span><span><HardDrive size={16} />本地仓库</span></div></div>;
 }
 
-function Inspector({ folder, connection, snapshot }: { folder?: Folder; connection?: ConnectionProfile; snapshot: WorkspaceSnapshot }) {
+function Inspector({ folder, connection, snapshot, connected, monitorView, onApproveMonitor }: { folder?: Folder; connection?: ConnectionProfile; snapshot: WorkspaceSnapshot; connected: boolean; monitorView?: AutoMonitorView; onApproveMonitor(): void }) {
   if (folder) return <div className="inspector-content"><div className="inspector-icon"><FolderIcon size={20} /></div><h2>{folder.name}</h2><dl><dt>上级</dt><dd>{snapshot.folders.find((value) => value.id === folder.parentId)?.name ?? "根目录"}</dd><dt>连接</dt><dd>{snapshot.connections.filter((value) => value.folderId === folder.id).length}</dd><dt>修订</dt><dd>{folder.revision}</dd></dl>{folder.notes && <p>{folder.notes}</p>}</div>;
-  if (connection) return <div className="inspector-content"><div className="inspector-icon"><ConnectionIcon kind={connection.kind} /></div><h2>{connection.name}</h2><div className="kind-badge">{connection.kind.toUpperCase()}</div><dl><dt>主机</dt><dd>{connection.host || "Local"}</dd><dt>端口</dt><dd>{connection.port || "-"}</dd><dt>用户</dt><dd>{connection.username || "-"}</dd><dt>代理</dt><dd>{snapshot.proxies.find((value) => value.id === connection.proxyId)?.name ?? "Direct"}</dd><dt>终端</dt><dd>{snapshot.terminalProfiles.find((value) => value.id === connection.terminalProfileId)?.name ?? "默认"}</dd></dl>{connection.tags.length > 0 && <div className="tag-list">{connection.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}{connection.notes && <p>{connection.notes}</p>}</div>;
+  if (connection) return <div className="inspector-content"><div className="inspector-icon"><ConnectionIcon kind={connection.kind} /></div><h2>{connection.name}</h2><div className="kind-badge">{connection.kind.toUpperCase()}</div><dl><dt>主机</dt><dd>{connection.host || "Local"}</dd><dt>端口</dt><dd>{connection.port || "-"}</dd><dt>用户</dt><dd>{connection.username || "-"}</dd><dt>代理</dt><dd>{snapshot.proxies.find((value) => value.id === connection.proxyId)?.name ?? "Direct"}</dd><dt>终端</dt><dd>{snapshot.terminalProfiles.find((value) => value.id === connection.terminalProfileId)?.name ?? snapshot.terminalProfiles[0]?.name ?? "默认"}</dd></dl>{connection.kind === "ssh" && !connection.temporary && <HostMonitorPanel connected={connected} view={monitorView} onApprove={onApproveMonitor} />}{connection.tags.length > 0 && <div className="tag-list">{connection.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}{connection.notes && <p>{connection.notes}</p>}</div>;
   return <div className="inspector-empty"><MoreHorizontal size={20} /><span>未选择项目</span></div>;
 }
 
-function PanelSeparator({ orientation, label, onPointerDown, onNudge }: { orientation: "vertical" | "horizontal"; label: string; onPointerDown(event: React.PointerEvent): void; onNudge(delta: number): void }) {
-  return <div className={`panel-separator ${orientation}`} role="separator" aria-label={label} aria-orientation={orientation} tabIndex={0} onPointerDown={onPointerDown} onKeyDown={(event) => { const negative = orientation === "vertical" ? event.key === "ArrowLeft" : event.key === "ArrowDown"; const positive = orientation === "vertical" ? event.key === "ArrowRight" : event.key === "ArrowUp"; if (negative || positive) { event.preventDefault(); onNudge(positive ? 12 : -12); } }} />;
+function PanelSeparator({ orientation, area, label, onPointerDown, onNudge }: { orientation: "vertical" | "horizontal"; area?: "left-resize" | "right-resize"; label: string; onPointerDown(event: React.PointerEvent): void; onNudge(delta: number): void }) {
+  return <div className={`panel-separator ${orientation}${area ? ` ${area}` : ""}`} role="separator" aria-label={label} aria-orientation={orientation} tabIndex={0} onPointerDown={onPointerDown} onKeyDown={(event) => { const negative = orientation === "vertical" ? event.key === "ArrowLeft" : event.key === "ArrowDown"; const positive = orientation === "vertical" ? event.key === "ArrowRight" : event.key === "ArrowUp"; if (negative || positive) { event.preventDefault(); onNudge(positive ? 12 : -12); } }} />;
 }
 
 const root = document.getElementById("root");

@@ -149,6 +149,7 @@ export interface WorkspaceSnapshot {
 
 export interface WorkspaceLayout {
   leftWidth: number;
+  leftOpen: boolean;
   rightWidth: number;
   bottomHeight: number;
   bottomOpen: boolean;
