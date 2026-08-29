@@ -4,6 +4,7 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,6 +14,7 @@ use firstshell_domain::{
     ProxyKind, PublicError, SshAuthenticationKind, TerminalEncoding as ProfileEncoding,
     TerminalProfile, TerminalProfileId,
 };
+use firstshell_relay_client::RelayConnectSpec;
 use firstshell_session::{
     LocalShell, LocalTerminalFactory, SessionError, SessionEvent, SessionEventSink, SessionId,
     SessionRegistry, SessionSnapshot, TerminalSize,
@@ -224,12 +226,13 @@ pub async fn configure_proxy_credential(
 ) -> Result<(), PublicError> {
     authorize(&window)?;
     let proxy = find_proxy(&state, proxy_id).await?;
-    if !matches!(proxy.kind, ProxyKind::Socks5 | ProxyKind::HttpConnect)
-        || proxy.username.is_empty()
-    {
+    let uses_credential = proxy.kind == ProxyKind::Relay
+        || (matches!(proxy.kind, ProxyKind::Socks5 | ProxyKind::HttpConnect)
+            && !proxy.username.is_empty());
+    if !uses_credential {
         return Err(public(
             ErrorCode::InvalidState,
-            "proxy does not use username/password authentication",
+            "proxy does not use a stored credential",
         ));
     }
     let account = proxy_credential_account(proxy_id);
@@ -252,9 +255,10 @@ pub async fn proxy_credential_status(
 ) -> Result<bool, PublicError> {
     authorize(&window)?;
     let proxy = find_proxy(&state, proxy_id).await?;
-    if !matches!(proxy.kind, ProxyKind::Socks5 | ProxyKind::HttpConnect)
-        || proxy.username.is_empty()
-    {
+    let uses_credential = proxy.kind == ProxyKind::Relay
+        || (matches!(proxy.kind, ProxyKind::Socks5 | ProxyKind::HttpConnect)
+            && !proxy.username.is_empty());
+    if !uses_credential {
         return Ok(false);
     }
     let account = proxy_credential_account(proxy_id);
@@ -320,7 +324,7 @@ pub async fn open_terminal_session(
             .map_err(map_session),
         ConnectionKind::Rdp => Err(public(
             ErrorCode::InvalidState,
-            "RDP sessions are delivered in M6",
+            "RDP connections must be opened through the isolated RDP workspace",
         )),
     }
 }
@@ -769,6 +773,73 @@ async fn resolve_proxy_route(
                 ProxyRoute::HttpConnect(endpoint)
             })
         }
+        ProxyKind::Relay => {
+            let account = proxy_credential_account(proxy.id);
+            let token = tokio::task::spawn_blocking(move || {
+                keyring::Entry::new(PROXY_CREDENTIAL_SERVICE, &account)
+                    .and_then(|entry| entry.get_password())
+            })
+            .await
+            .map_err(|_| public(ErrorCode::Internal, "relay token lookup stopped"))?
+            .map_err(|_| {
+                public(
+                    ErrorCode::InvalidState,
+                    "configure the relay token before connecting",
+                )
+            })?;
+            let token = validated_native_secret(token)?;
+            let certificate = load_relay_certificate(&proxy.relay_certificate_path).await?;
+            let quic_address = resolve_relay_endpoint(&proxy.host, proxy.port).await?;
+            let tls_address = resolve_relay_endpoint(&proxy.host, proxy.fallback_port).await?;
+            Ok(ProxyRoute::Relay(RelayConnectSpec {
+                direct_target: Some((connection.host.clone(), connection.port)),
+                quic_address,
+                tls_address,
+                server_name: proxy.relay_server_name.clone(),
+                root_certificate_der: certificate,
+                token,
+                mapping: proxy.relay_mapping.clone(),
+                timeout: Duration::from_secs(10),
+            }))
+        }
+    }
+}
+
+async fn resolve_relay_endpoint(
+    host: &str,
+    port: u16,
+) -> Result<std::net::SocketAddr, PublicError> {
+    tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|_| public(ErrorCode::InvalidState, "relay endpoint cannot be resolved"))?
+        .next()
+        .ok_or_else(|| public(ErrorCode::InvalidState, "relay endpoint has no addresses"))
+}
+
+async fn load_relay_certificate(path: &str) -> Result<Vec<u8>, PublicError> {
+    const MAX_CERTIFICATE_BYTES: u64 = 64 * 1024;
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .map_err(|_| public(ErrorCode::InvalidState, "relay certificate is unavailable"))?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_CERTIFICATE_BYTES {
+        return Err(public(
+            ErrorCode::InvalidState,
+            "relay certificate size is invalid",
+        ));
+    }
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|_| public(ErrorCode::InvalidState, "relay certificate cannot be read"))?;
+    if bytes.starts_with(b"-----BEGIN") {
+        let mut cursor = Cursor::new(bytes);
+        let certificate = rustls_pemfile::certs(&mut cursor)
+            .next()
+            .transpose()
+            .map_err(|_| public(ErrorCode::InvalidState, "relay certificate PEM is invalid"))?
+            .ok_or_else(|| public(ErrorCode::InvalidState, "relay certificate PEM is empty"))?;
+        Ok(certificate.as_ref().to_vec())
+    } else {
+        Ok(bytes)
     }
 }
 

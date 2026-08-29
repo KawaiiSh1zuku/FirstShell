@@ -1,0 +1,26 @@
+[package]
+name = "firstshell-relayd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+firstshell-relay-protocol = { path = "../../crates/relay-protocol" }
+quinn.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+firstshell-relay-client = { path = "../../crates/relay-client" }
+rcgen = "0.14.5"

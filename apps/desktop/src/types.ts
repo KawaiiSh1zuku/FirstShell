@@ -1,5 +1,5 @@
 export type ConnectionKind = "ssh" | "rdp" | "local";
-export type ProxyKind = "direct" | "socks5" | "http_connect" | "system";
+export type ProxyKind = "direct" | "socks5" | "http_connect" | "system" | "relay";
 export type ProxyDnsMode = "remote" | "local";
 export type SshAuthenticationKind = "agent" | "password" | "private_key" | "keyboard_interactive";
 export type TerminalEncoding = "utf8" | "gb18030" | "big5";
@@ -104,6 +104,10 @@ export interface ProxyProfile {
   port: number;
   username: string;
   dnsMode: ProxyDnsMode;
+  fallbackPort: number;
+  relayServerName: string;
+  relayMapping: string;
+  relayCertificatePath: string;
 }
 
 export interface ProxyInput {
@@ -113,6 +117,10 @@ export interface ProxyInput {
   port: number;
   username: string;
   dnsMode: ProxyDnsMode;
+  fallbackPort: number;
+  relayServerName: string;
+  relayMapping: string;
+  relayCertificatePath: string;
 }
 
 export interface TerminalProfile {
@@ -424,3 +432,27 @@ export type Selection =
   | { kind: "folder"; id: string }
   | { kind: "connection"; id: string }
   | null;
+
+export type RdpHelperState = "starting" | "running" | "stopped" | "failed";
+
+export type RdpHelperEvent =
+  | { type: "state"; payload: { state: RdpHelperState } }
+  | { type: "pong" }
+  | { type: "exited"; payload: { code: number | null; requested: boolean } }
+  | { type: "error"; payload: { code: string; message: string } };
+
+export interface DesktopRdpEvent {
+  sessionId: string;
+  event: RdpHelperEvent;
+}
+
+export interface RdpSessionSnapshot {
+  id: string;
+  connectionId: string;
+  state: RdpHelperState;
+}
+
+export interface RdpOpenOptions {
+  width: number;
+  height: number;
+}

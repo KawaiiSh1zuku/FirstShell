@@ -2,7 +2,7 @@
 
 FirstShell 是一个面向运维、开发和远程支持场景的开源桌面工作台。项目采用 Rust + Tauri，目标是覆盖 FinalShell 的核心工作流，但不会复制其代码、资源、私有协议或存储实现。
 
-当前仓库已完成 **M4 主机监控与效率工具**。项目负责人于 2026-08-24 决定暂缓 M5 端到端加密同步，恢复前不进入开发流程；下一开发里程碑尚未确定。本文档同时描述已实现边界和后续推荐方案，不能据此推断尚未验收的产品功能已经完成；实际进度以 [里程碑](./milestones.md) 为唯一真相源。
+当前仓库已完成 **M4 主机监控与效率工具**。项目负责人于 2026-08-24 决定暂缓 M5 端到端加密同步，恢复前不进入开发流程；M6 RDP 与自托管加速中继正在开发验收。本文档同时描述已实现边界和后续推荐方案，不能据此推断尚未验收的产品功能已经完成；实际进度以 [里程碑](./milestones.md) 为唯一真相源。
 
 ## 已确认决策
 
@@ -30,11 +30,14 @@ FirstShell 是一个面向运维、开发和远程支持场景的开源桌面工
 10. [M3 验收记录](./verification/m3.md)：SFTP、Connector、隧道、性能、安全与视觉证据。
 11. [M3 补充验收记录](./verification/m3-supplement.md)：自动 companion SFTP、紧凑文件工作区、启动快速解锁与终端 palette。
 12. [M4 验收记录](./verification/m4.md)：agentless 探针、加密效率对象、广播、远程工具、视觉与延期边界。
-13. [M2 开发进度检查点](./2026-08-23_m2-development-progress.md)：2026-08-23 的历史检查点及其后续解决状态。
-14. [架构决策记录](./adr/0001-modular-monolith.md)：重要方案选择及其取舍。
-15. [M3 Operations ADR](./adr/0006-m3-operations-runtime.md)：Connector、SFTP、隧道、运行时任务和本地路径边界。
-16. [M3 补充 ADR](./adr/0007-m3-companion-sftp-and-terminal-themes.md)：companion 生命周期、自动快速解锁、地址栏与终端调色板。
-17. [M4 工具 ADR](./adr/0008-m4-agentless-tools.md)：固定探针、Vault 效率对象、原子广播与受控远程工具。
+13. [M6 验收记录](./verification/m6.md)：RDP helper、relay 安全路径、自动化证据和待验门槛。
+14. [relayd 部署](./relayd.md)：配置格式、令牌散列、证书和启动方式。
+15. [M2 开发进度检查点](./2026-08-23_m2-development-progress.md)：2026-08-23 的历史检查点及其后续解决状态。
+16. [架构决策记录](./adr/0001-modular-monolith.md)：重要方案选择及其取舍。
+17. [M3 Operations ADR](./adr/0006-m3-operations-runtime.md)：Connector、SFTP、隧道、运行时任务和本地路径边界。
+18. [M3 补充 ADR](./adr/0007-m3-companion-sftp-and-terminal-themes.md)：companion 生命周期、自动快速解锁、地址栏与终端调色板。
+19. [M4 工具 ADR](./adr/0008-m4-agentless-tools.md)：固定探针、Vault 效率对象、原子广播与受控远程工具。
+20. [M6 RDP/relay ADR](./adr/0009-m6-rdp-relay-runtime.md)：helper 后端、Connector 路由和 relay 服务边界。
 
 
 ## 文档治理

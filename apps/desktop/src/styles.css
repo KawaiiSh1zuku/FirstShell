@@ -301,6 +301,16 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .center-stack { grid-area: center; display: flex; min-width: 0; min-height: 0; flex-direction: column; background: #0e100e; }
 .terminal-surface { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; }
 .terminal-tabs-content { position: relative; min-width: 0; min-height: 0; flex: 1; }
+.connection-workspaces, .rdp-tabs-content { position: relative; min-width: 0; min-height: 0; height: 100%; }
+.connection-workspaces > .terminal-tabs-content:empty, .connection-workspaces > .rdp-tabs-content:empty { display: none; }
+.rdp-connection { position: absolute; inset: 0; display: none; min-width: 0; min-height: 0; grid-template-rows: auto 1fr; background: var(--surface-0); }
+.rdp-connection.active { display: grid; }
+.rdp-state { font-size: 12px; color: var(--text-muted); }
+.rdp-state.running { color: var(--accent); }
+.rdp-state.failed { color: var(--danger); }
+.rdp-companion-status { display: flex; min-width: 0; min-height: 0; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--text-muted); text-align: center; padding: 24px; }
+.rdp-companion-status strong { color: var(--text-primary); font-size: 15px; }
+.rdp-companion-status p { max-width: 620px; margin: 0; color: var(--danger); }
 .terminal-loading { display: grid; min-height: 0; flex: 1; place-items: center; color: var(--subtle); font-size: 11px; }
 .connection-terminal { position: absolute; inset: 0; display: none; min-width: 0; min-height: 0; flex-direction: column; }
 .connection-terminal.active { display: flex; }

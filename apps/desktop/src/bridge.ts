@@ -5,6 +5,7 @@ import type {
   CommandHistoryEntry,
   ConnectionInput,
   ConnectionProfile,
+  DesktopRdpEvent,
   DesktopTunnelSnapshot,
   ExportReceipt,
   Folder,
@@ -19,6 +20,8 @@ import type {
   RemoteEntry,
   RemoteEditDocument,
   RestoreReceipt,
+  RdpOpenOptions,
+  RdpSessionSnapshot,
   DesktopSessionEvent,
   HostKeyEvidence,
   QuickConnectInput,
@@ -79,6 +82,10 @@ export interface WorkspaceBridge {
   credentialStatus(connectionId: string): Promise<boolean>;
   configureProxyCredential(proxyId: string, secret: string): Promise<void>;
   proxyCredentialStatus(proxyId: string): Promise<boolean>;
+  configureRdpCredential(connectionId: string, secret: string): Promise<void>;
+  rdpCredentialStatus(connectionId: string): Promise<boolean>;
+  openRdp(connectionId: string, options: RdpOpenOptions, onEvent: (value: DesktopRdpEvent) => void): Promise<RdpSessionSnapshot>;
+  closeRdp(sessionId: string): Promise<void>;
   openTerminal(connectionId: string, size: TerminalSize, onEvent: (value: DesktopSessionEvent) => void): Promise<SessionSnapshot>;
   openQuickTerminal(input: QuickConnectInput, size: TerminalSize, onEvent: (value: DesktopSessionEvent) => void): Promise<SessionSnapshot>;
   listTerminals(): Promise<SessionSnapshot[]>;
@@ -173,6 +180,14 @@ const tauriBridge: WorkspaceBridge = {
   credentialStatus: (connectionId) => invoke("connection_credential_status", { connectionId }),
   configureProxyCredential: (proxyId, secret) => invoke("configure_proxy_credential", { proxyId, secret }),
   proxyCredentialStatus: (proxyId) => invoke("proxy_credential_status", { proxyId }),
+  configureRdpCredential: (connectionId, secret) => invoke("configure_rdp_credential", { connectionId, secret }),
+  rdpCredentialStatus: (connectionId) => invoke("rdp_credential_status", { connectionId }),
+  openRdp: (connectionId, options, onEvent) => {
+    const channel = new Channel<DesktopRdpEvent>();
+    channel.onmessage = onEvent;
+    return invoke("open_rdp_session", { connectionId, options, onEvent: channel });
+  },
+  closeRdp: (sessionId) => invoke("close_rdp_session", { sessionId }),
   openTerminal: (connectionId, size, onEvent) => {
     const channel = new Channel<DesktopSessionEvent>();
     channel.onmessage = onEvent;
@@ -523,6 +538,14 @@ export function createPreviewBridge(): WorkspaceBridge {
     credentialStatus: async () => true,
     configureProxyCredential: async () => undefined,
     proxyCredentialStatus: async () => true,
+    configureRdpCredential: async () => undefined,
+    rdpCredentialStatus: async () => true,
+    openRdp: async (connectionId, _options, onEvent) => {
+      const value: RdpSessionSnapshot = { id: nextId("rdp-session"), connectionId, state: "starting" };
+      queueMicrotask(() => onEvent({ sessionId: value.id, event: { type: "state", payload: { state: "running" } } }));
+      return value;
+    },
+    closeRdp: async () => undefined,
     openTerminal: async (_connectionId, size, onEvent) => {
       const value: SessionSnapshot = { id: nextId("session"), state: "ready", size };
       sessions.set(value.id, value);

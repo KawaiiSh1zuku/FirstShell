@@ -11,11 +11,14 @@ tauri-build.workspace = true
 [dependencies]
 firstshell-application = { path = "../../../crates/application" }
 firstshell-domain = { path = "../../../crates/domain" }
+firstshell-rdp-protocol = { path = "../../../crates/rdp-protocol" }
+firstshell-relay-client = { path = "../../../crates/relay-client" }
 firstshell-security = { path = "../../../crates/security" }
 firstshell-session = { path = "../../../crates/session" }
 firstshell-ssh = { path = "../../../crates/ssh" }
 firstshell-storage = { path = "../../../crates/storage" }
 keyring.workspace = true
+rustls-pemfile.workspace = true
 serde.workspace = true
 tauri.workspace = true
 tinyfiledialogs = "3.9"

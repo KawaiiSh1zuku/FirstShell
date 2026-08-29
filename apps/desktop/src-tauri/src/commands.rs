@@ -27,6 +27,8 @@ pub struct DesktopState {
     pub operations: Arc<crate::transfer_commands::DesktopOperations>,
     /// Agentless monitoring and bounded efficiency-tool runtimes.
     pub tools: Arc<crate::m4_commands::DesktopTools>,
+    /// Isolated RDP helper sessions and native credential boundary.
+    pub rdp: Arc<crate::rdp_commands::DesktopRdp>,
 }
 
 fn authorize_window_label(label: &str) -> Result<(), PublicError> {
@@ -91,6 +93,7 @@ pub async fn lock_vault(
     state.sessions.close_all().await;
     state.operations.close_all().await;
     state.tools.close_all().await;
+    state.rdp.close_all().await;
     state.workspace.lock()
 }
 

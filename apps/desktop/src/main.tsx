@@ -58,6 +58,7 @@ import { VaultGate } from "./VaultGate";
 import "./styles.css";
 
 const TerminalWorkspace = lazy(() => import("./TerminalWorkspace").then((module) => ({ default: module.TerminalWorkspace })));
+const RdpWorkspace = lazy(() => import("./RdpWorkspace").then((module) => ({ default: module.RdpWorkspace })));
 const OperationsWorkspace = lazy(() => import("./OperationsWorkspace").then((module) => ({ default: module.OperationsWorkspace })));
 const ToolsWorkspace = lazy(() => import("./ToolsWorkspace").then((module) => ({ default: module.ToolsWorkspace })));
 
@@ -320,7 +321,12 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
       await refresh();
       if (credential && value) {
         const connectionId = value.id;
-        await perform(() => bridge.configureCredential(connectionId, credential), "SSH 凭据已保存");
+        await perform(
+          () => input.kind === "rdp"
+            ? bridge.configureRdpCredential(connectionId, credential)
+            : bridge.configureCredential(connectionId, credential),
+          input.kind === "rdp" ? "RDP 凭据已保存" : "SSH 凭据已保存",
+        );
       }
       openConnection(value.id);
       dispatch({ type: "patch", value: { entityDialog: null } });
@@ -558,7 +564,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
             })}
             {state.openTabs.length === 0 && <div className="tab-placeholder">工作区</div>}
           </div>
-          {state.openTabs.length > 0 ? <Suspense fallback={<div className="terminal-loading">正在加载终端</div>}><TerminalWorkspace bridge={bridge} connections={state.openTabs.map((id) => allConnections.find((value) => value.id === id)).filter((value): value is ConnectionProfile => Boolean(value))} activeConnectionId={activeConnection?.id ?? null} profiles={snapshot.terminalProfiles} onActivity={addActivity} onReadySessionsChange={setReadySessions} onReadyConnectionsChange={setReadyConnectionIds} insertRequest={insertRequest} /></Suspense> : <WorkspaceOverview snapshot={snapshot} />}
+          {state.openTabs.length > 0 ? <Suspense fallback={<div className="terminal-loading">正在加载工作区</div>}><div className="connection-workspaces"><TerminalWorkspace bridge={bridge} connections={state.openTabs.map((id) => allConnections.find((value) => value.id === id)).filter((value): value is ConnectionProfile => value !== undefined && value.kind !== "rdp")} activeConnectionId={activeConnection?.kind === "rdp" ? null : activeConnection?.id ?? null} profiles={snapshot.terminalProfiles} onActivity={addActivity} onReadySessionsChange={setReadySessions} onReadyConnectionsChange={setReadyConnectionIds} insertRequest={insertRequest} /><RdpWorkspace bridge={bridge} connections={state.openTabs.map((id) => allConnections.find((value) => value.id === id)).filter((value): value is ConnectionProfile => value !== undefined && value.kind === "rdp")} activeConnectionId={activeConnection?.kind === "rdp" ? activeConnection.id : null} onActivity={addActivity} /></div></Suspense> : <WorkspaceOverview snapshot={snapshot} />}
         </div>
         {state.layout.bottomOpen && <PanelSeparator orientation="horizontal" label="调整活动面板高度" onPointerDown={(event) => beginResize("bottom", event)} onNudge={(delta) => nudgeLayout("bottom", delta)} />}
         <Suspense fallback={state.layout.bottomOpen ? <section className="activity-panel"><div className="empty-list">正在加载文件与网络工具</div></section> : null}><OperationsWorkspace bridge={bridge} connections={snapshot.connections} activeConnectionId={activeConnection?.id ?? null} readyConnectionIds={readyConnectionIds} hidden={!state.layout.bottomOpen} activities={state.activities} onActivity={addActivity} onCollapse={() => void saveLayout({ ...state.layout, bottomOpen: false })} /></Suspense>
@@ -577,7 +583,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         <span>{snapshot.connections.length} 个连接</span>
         {!state.layout.bottomOpen && <button type="button" onClick={() => void saveLayout({ ...state.layout, bottomOpen: true })}><Activity size={13} />活动</button>}
         {state.undoDelete && <button type="button" aria-label={`撤销删除 ${state.undoDelete.label}`} onClick={() => void undoDelete()}><Undo2 size={13} />撤销删除</button>}
-        <span>M4</span>
+        <span>M6</span>
       </footer>
 
       {state.entityDialog && <EntityDialog dialog={state.entityDialog} snapshot={snapshot} busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { entityDialog: null, error: null } })} onSaveFolder={saveFolder} onSaveConnection={saveConnection} />}

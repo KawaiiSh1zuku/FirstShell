@@ -80,9 +80,9 @@ M1 基础工作区、M2 SSH 终端、M3 SFTP/复杂网络和 M4 主机监控/效
 | 连接、代理、片段和 UI 同步 | M5 | Deferred | 分类型冲突策略和离线 outbox |
 | 多设备注册与撤销 | M5 | Deferred | 设备签名、撤销和密钥轮换 |
 | 冲突检测与人工解决 | M5 | Deferred | 不静默覆盖高风险配置 |
-| RDP 工作区集成 | M6 | Planned | 隔离 helper、崩溃隔离、最小凭据 |
-| 自托管加速中继 | M6 | Planned | QUIC/TLS 优先、TCP/TLS 回退 |
-| 中继端口映射 | M6 | Planned | 鉴权、目标白名单、时长和流量配额 |
+| RDP 工作区集成 | M6 | Implemented / pending real backend | 隔离 helper、伴随窗口、崩溃隔离、最小凭据；待真实 FreeRDP 验收 |
+| 自托管加速中继 | M6 | Implemented / partial verification | 直连优先、QUIC/TLS 主路径、真实 TCP/TLS 回退；待 QUIC 环境互操作 |
+| 中继目标映射与配额 | M6 | Implemented / partial verification | 令牌鉴权、服务端目标白名单、时长/流量/带宽/并发配额与审计 |
 
 ## 跨平台与发布
 

@@ -2,7 +2,7 @@
 
 FirstShell 是一个 Windows 优先的开源远程运维桌面工作台，采用 Rust、Tauri、React 和 SQLite。项目以 clean-room 方式覆盖常用 SSH、SFTP、同步与远程桌面工作流，不复制参考产品的代码、资源或私有协议。
 
-当前已完成 M3 SFTP、代理、跳板与隧道，下一阶段为主机监控与效率工具；产品功能按 [`docs/milestones.md`](./docs/milestones.md) 逐个里程碑交付。
+当前已完成 M4 主机监控与效率工具；M5 已按项目负责人决定暂缓，M6 RDP 与自托管加速中继处于开发验收阶段。产品功能按 [`docs/milestones.md`](./docs/milestones.md) 逐个里程碑交付。
 
 ## 开发环境
 
@@ -30,5 +30,7 @@ M1 自动化验收与延期到 M4 后的实机检查见 [`docs/verification/m1.m
 M2 的终端运行时、安全边界、自动化与双视口视觉验收见 [`docs/verification/m2.md`](./docs/verification/m2.md)。
 M3 的文件工作流、复杂网络 Connector、隧道、安全与性能验收见 [`docs/verification/m3.md`](./docs/verification/m3.md)。
 M3 补充的自动 SFTP、目录树/地址栏、启动快速解锁和终端主题验收见 [`docs/verification/m3-supplement.md`](./docs/verification/m3-supplement.md)。
+M4 的主机监控、效率工具和延期边界见 [`docs/verification/m4.md`](./docs/verification/m4.md)。
+M6 的 RDP helper、中继协议、自动化证据和未通过门槛见 [`docs/verification/m6.md`](./docs/verification/m6.md)。
 
 设计、安全模型、数据模型、许可证结论与验收状态见 [`docs/README.md`](./docs/README.md)。项目以 [AGPL-3.0-only](./LICENSE) 发布。

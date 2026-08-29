@@ -44,6 +44,9 @@ crates/
   security/                密钥、加密、known_hosts 与脱敏
   sync-protocol/           端到端密文同步协议
   relay-protocol/          中继认证、配额与数据帧
+  relay-client/            直连优先、QUIC/TLS 与 TCP/TLS 回退
+helpers/
+  rdp/                     隔离 FreeRDP 子进程与认证 named-pipe IPC
 services/
   syncd/                   可自托管同步服务
   relayd/                  可自托管加速与转发服务
@@ -84,12 +87,14 @@ M2 已将这些规则落实为 32 个会话的默认注册上限、256 条交互
 所有网络入口统一通过 `Connector`：
 
 ```text
-Session -> Connector -> Direct | SOCKS5 | HTTP CONNECT | System Proxy | SSH Jump
+Session -> Connector -> Direct | SOCKS5 | HTTP CONNECT | System Proxy | Relay | SSH Jump
 ```
 
 Connector 负责 DNS 策略、连接超时、取消、代理认证、跳板链循环检测和审计标签。跳板链必须设置最大深度，系统代理解析后的结果会固化到本次连接上下文，避免运行中配置漂移。
 
 M3 将 Connector 落在现有 `firstshell-ssh` crate 内：Direct、SOCKS5 和 HTTP CONNECT 共用一致的端点/超时边界，SOCKS5 支持本地或远端 DNS，HTTP CONNECT 与 SOCKS5 凭据只从 OS keyring 进入 Rust。Windows 系统代理读取当前静态配置，其他平台读取标准代理环境变量；每次连接只解析一次，不执行 PAC JavaScript。跳板链以首跳 Connector 加逐跳 `direct-tcpip` 组成，最多四跳，每跳独立认证和校验 host key。完整取舍见 [ADR-0006](./adr/0006-m3-operations-runtime.md)。
+
+M6 在同一 Connector 增加 `Relay` 路由：先直接连接最终 SSH 目标，失败后尝试 QUIC/TLS，最后尝试 TCP/TLS。客户端只提交服务端定义的 mapping 名称，不提交任意目标；中继令牌从 OS keyring 直接进入 Rust 可清零值，TLS 只信任 profile 指定的 PEM/DER 证书。每次选择或失败以不含令牌的结构化事件输出。`relayd` 是独立二进制，仅依赖版本化协议、映射策略和配额，不链接 Vault、storage 或 SSH 凭据。完整取舍见 [ADR-0009](./adr/0009-m6-rdp-relay-runtime.md)。
 
 SSH 默认使用纯 Rust `russh` 实现承载可控的终端、SFTP 和隧道能力。M2 的交互连接使用 20 秒 keepalive、连续 3 次失败阈值和 120 秒 inactivity timeout。平台 OpenSSH 只在用户明确启用且纯 Rust 路径返回连接类兼容错误时回退；认证失败、未知或变化的 host key 不得触发回退。桌面端回退目前只允许 agent 认证，并固定使用应用自有 known_hosts 和参数终止符，因此秘密不会进入 argv。
 
@@ -106,6 +111,8 @@ M3 的 `DesktopOperations` 独立持有 SFTP、传输、隧道和拖放暂存注
 M3 补充的 companion coordinator 订阅每个持久化 SSH connection 的 ready pane 计数：首个 pane ready 后创建一个独立 SFTP workspace，同连接多分屏共享，最后一个 pane 退出后关闭。Operations 视觉折叠时组件仍挂载以维护生命周期；WebView 只保存 workspace ID 和公开快照，Rust 继续拥有认证、host key、以远端系统 `/` 为根的路径解析与关闭资源。自动 SFTP 失败与终端状态隔离。完整取舍见 [ADR-0007](./adr/0007-m3-companion-sftp-and-terminal-themes.md)。
 
 M4 的 `DesktopTools` 独立持有最多 16 个周期监控，每个监控使用一条认证低优先级 SSH 连接和 300 点 `VecDeque`；事件只含版本化 sample、状态和稳定 diagnostic。Vault 锁定取消全部 monitor。session registry 的广播在持有注册表锁时先校验完整 target set 与队列容量，再统一入队；WebView 的 ready session ID 不赋予任意会话控制权。`DesktopOperations` 继续拥有远程编辑、压缩和 ZMODEM 生命周期，ZMODEM 复用 256 项/2 并发队列。完整取舍见 [ADR-0008](./adr/0008-m4-agentless-tools.md)。
+
+M6 的 `DesktopRdp` 以 8 个 owned semaphore permit 限制并发 helper。桌面进程创建拒绝远程客户端的随机 named pipe，通过 helper stdin 传递一次性启动令牌，完成版本 2 握手后才发送单次 RDP 密码。helper 仅启动同目录的 `wfreerdp.exe`，唯一 argv 是 `/args-from:stdin`，连接参数和密码逐行写入 FreeRDP stdin；helper 退出、用户关闭、Vault 锁定或应用退出都会回收子进程。前端仅接收脱敏状态与错误，不接收密码、pipe 名或启动令牌。
 
 Tauri capability 按窗口标签和命令最小授权；不暴露通用 shell、任意文件系统或任意 HTTP API。
 

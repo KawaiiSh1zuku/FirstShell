@@ -1,0 +1,19 @@
+[package]
+name = "firstshell-relay-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+firstshell-relay-protocol = { path = "../relay-protocol" }
+quinn.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

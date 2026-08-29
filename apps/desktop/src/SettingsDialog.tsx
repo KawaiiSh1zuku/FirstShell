@@ -59,11 +59,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   title="代理配置"
                   items={props.snapshot.proxies}
                   label={(value) => value.name}
-                  detail={(value) => `${value.kind}${value.username ? proxyCredentials[value.id] ? " · 凭据已配置" : " · 未配置凭据" : ""}`}
+                  detail={(value) => `${proxyKindLabel(value.kind)}${usesProxyCredential(value) ? proxyCredentials[value.id] ? " · 凭据已配置" : " · 未配置凭据" : ""}`}
                   onAdd={() => setEditingProxy(null)}
                   onEdit={(value) => setEditingProxy(value)}
                   onDelete={props.onDeleteProxy}
-                  extraAction={(value) => value.username && (value.kind === "socks5" || value.kind === "http_connect") ? <button className="icon-button" type="button" aria-label={`配置 ${value.name} 的代理凭据`} title="配置代理凭据" onClick={() => setCredentialProxy(value)}><KeyRound size={15} /></button> : null}
+                  extraAction={(value) => usesProxyCredential(value) ? <button className="icon-button" type="button" aria-label={`配置 ${value.name} 的凭据`} title={value.kind === "relay" ? "配置中继令牌" : "配置代理凭据"} onClick={() => setCredentialProxy(value)}><KeyRound size={15} /></button> : null}
                 />
               ) : (
                 <ProxyForm value={editingProxy ?? undefined} busy={props.busy} error={props.error} onCancel={() => setEditingProxy(undefined)} onSave={async (input) => { try { await props.onSaveProxy(input, editingProxy ?? undefined); setEditingProxy(undefined); } catch {} }} />
@@ -86,9 +86,9 @@ export function SettingsDialog(props: SettingsDialogProps) {
       </section>
       {credentialProxy && (
         <CredentialDialog
-          title="保存代理密码"
-          description={`${credentialProxy.name} · ${credentialProxy.username}`}
-          label="代理密码"
+          title={credentialProxy.kind === "relay" ? "保存中继令牌" : "保存代理密码"}
+          description={credentialProxy.kind === "relay" ? credentialProxy.name : `${credentialProxy.name} · ${credentialProxy.username}`}
+          label={credentialProxy.kind === "relay" ? "中继令牌" : "代理密码"}
           persistent
           onClose={() => setCredentialProxy(null)}
           onSubmit={async (secret) => {
@@ -134,15 +134,34 @@ function ProxyForm({ value, busy, error, onCancel, onSave }: { value?: ProxyProf
   const [port, setPort] = useState(value?.port ?? 1080);
   const [username, setUsername] = useState(value?.username ?? "");
   const [dnsMode, setDnsMode] = useState<ProxyInput["dnsMode"]>(value?.dnsMode ?? "remote");
-  const endpoint = kind === "socks5" || kind === "http_connect";
+  const [fallbackPort, setFallbackPort] = useState(value?.fallbackPort ?? 443);
+  const [relayServerName, setRelayServerName] = useState(value?.relayServerName ?? "");
+  const [relayMapping, setRelayMapping] = useState(value?.relayMapping ?? "");
+  const [relayCertificatePath, setRelayCertificatePath] = useState(value?.relayCertificatePath ?? "");
+  const networkProxy = kind === "socks5" || kind === "http_connect";
+  const relay = kind === "relay";
+  const endpoint = networkProxy || relay;
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    return onSave({ kind, name, host: endpoint ? host : "", port: endpoint ? port : 0, username: endpoint ? username : "", dnsMode });
+    return onSave({
+      kind,
+      name,
+      host: endpoint ? host : "",
+      port: endpoint ? port : 0,
+      username: networkProxy ? username : "",
+      dnsMode,
+      fallbackPort: relay ? fallbackPort : 0,
+      relayServerName: relay ? relayServerName : "",
+      relayMapping: relay ? relayMapping : "",
+      relayCertificatePath: relay ? relayCertificatePath : "",
+    });
   };
   return (
     <form className="entity-form" onSubmit={submit}>
-      <div className="form-row"><label><span>名称</span><input autoFocus required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} /></label><label><span>类型</span><select value={kind} onChange={(event) => setKind(event.target.value as ProxyInput["kind"])}><option value="direct">Direct</option><option value="socks5">SOCKS5</option><option value="http_connect">HTTP CONNECT</option><option value="system">系统代理</option></select></label></div>
-      {endpoint && <><div className="form-row endpoint-row"><label><span>主机</span><input required value={host} onChange={(event) => setHost(event.target.value)} /></label><label><span>端口</span><input type="number" min={1} max={65535} value={port} onChange={(event) => setPort(Number(event.target.value))} /></label></div><div className="form-row"><label><span>用户名</span><input value={username} onChange={(event) => setUsername(event.target.value)} /></label><label><span>DNS 解析</span><select value={dnsMode} onChange={(event) => setDnsMode(event.target.value as ProxyInput["dnsMode"])}><option value="remote">代理端解析</option><option value="local">本地解析</option></select></label></div></>}
+      <div className="form-row"><label><span>名称</span><input autoFocus required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} /></label><label><span>类型</span><select value={kind} onChange={(event) => setKind(event.target.value as ProxyInput["kind"])}><option value="direct">Direct</option><option value="socks5">SOCKS5</option><option value="http_connect">HTTP CONNECT</option><option value="system">系统代理</option><option value="relay">FirstShell 中继</option></select></label></div>
+      {endpoint && <div className="form-row endpoint-row"><label><span>{relay ? "中继主机" : "主机"}</span><input required maxLength={253} value={host} onChange={(event) => setHost(event.target.value)} /></label><label><span>{relay ? "QUIC/TLS 端口" : "端口"}</span><input type="number" min={1} max={65535} value={port} onChange={(event) => setPort(Number(event.target.value))} /></label></div>}
+      {networkProxy && <div className="form-row"><label><span>用户名</span><input maxLength={128} value={username} onChange={(event) => setUsername(event.target.value)} /></label><label><span>DNS 解析</span><select value={dnsMode} onChange={(event) => setDnsMode(event.target.value as ProxyInput["dnsMode"])}><option value="remote">代理端解析</option><option value="local">本地解析</option></select></label></div>}
+      {relay && <><div className="form-row endpoint-row"><label><span>TCP/TLS 回退端口</span><input type="number" min={1} max={65535} value={fallbackPort} onChange={(event) => setFallbackPort(Number(event.target.value))} /></label><label><span>TLS 服务名</span><input required maxLength={253} value={relayServerName} onChange={(event) => setRelayServerName(event.target.value)} /></label></div><label><span>目标映射</span><input required maxLength={128} value={relayMapping} onChange={(event) => setRelayMapping(event.target.value)} /></label><label><span>中继证书路径（PEM / DER）</span><input required maxLength={4096} value={relayCertificatePath} onChange={(event) => setRelayCertificatePath(event.target.value)} /></label></>}
       {error && <div className="inline-error" role="alert">{error}</div>}
       <footer className="modal-actions"><button type="button" onClick={onCancel}>返回</button><button className="primary-command" type="submit" disabled={busy}><Save size={16} /><span>保存</span></button></footer>
     </form>
@@ -186,4 +205,12 @@ const TERMINAL_COLOR_FIELDS: readonly (readonly [keyof TerminalPalette, string])
 
 function terminalThemeLabel(theme: string) {
   return theme === "custom" ? "自定义" : TERMINAL_THEME_PRESETS.find((preset) => preset.id === theme)?.label ?? theme;
+}
+
+function usesProxyCredential(proxy: ProxyProfile) {
+  return proxy.kind === "relay" || ((proxy.kind === "socks5" || proxy.kind === "http_connect") && Boolean(proxy.username));
+}
+
+function proxyKindLabel(kind: ProxyProfile["kind"]) {
+  return ({ direct: "Direct", socks5: "SOCKS5", http_connect: "HTTP CONNECT", system: "系统代理", relay: "FirstShell 中继" })[kind];
 }

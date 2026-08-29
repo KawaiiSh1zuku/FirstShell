@@ -14,7 +14,7 @@ FirstShell 使用 SQLite 作为本地权威存储，通过 `rusqlite` 的 bundle
 
 ## 概念表
 
-M4 当前 schema version 3 包含下列实际表。后续里程碑新增表必须通过递增迁移落地，不能把规划表当成当前 schema：
+M6 当前 schema version 4 包含下列实际表。后续里程碑新增表必须通过递增迁移落地，不能把规划表当成当前 schema：
 
 | 表 | 明文索引字段 | 加密内容 | 主要用途 |
 | --- | --- | --- | --- |
@@ -23,7 +23,7 @@ M4 当前 schema version 3 包含下列实际表。后续里程碑新增表必�
 | `vault_key_slots` | slot_id、vault_id、kind、created_at | 恢复口令包装的 Vault Key | 密钥环丢失后的仓库恢复 |
 | `folders` | id、parent_id、sort_order、revision、deleted_at | 名称、备注 | 连接树层级 |
 | `connection_profiles` | id、folder_id、kind、revision、deleted_at | 主机、端口、用户、认证引用、标签、备注 | SSH/RDP/本地会话配置 |
-| `proxy_profiles` | id、kind、revision、deleted_at | 代理地址、认证、DNS 策略 | SOCKS5、HTTP CONNECT、系统代理 |
+| `proxy_profiles` | id、kind、revision、deleted_at | 代理地址、DNS 策略、中继 TLS 名称/证书路径/目标映射 | SOCKS5、HTTP CONNECT、系统代理、FirstShell relay |
 | `terminal_profiles` | id、revision | 字体、预设主题、自定义 ANSI palette、键位、编码、行为配置 | 终端外观与交互 |
 | `ui_state` | workspace_id、revision | 布局、面板尺寸、最近标签 | 工作区恢复 |
 | `snippets` | id、revision、deleted_at | 名称、标签、单行模板、类型化参数 | 加密命令片段与乐观并发 |
@@ -68,6 +68,8 @@ M3 仍不改变 schema version 2。连接加密 payload 增加有序 `jumpHostId
 M3 补充继续保持 schema version 2。terminal profile 加密 payload 增加可选 `palette`；旧记录缺少该字段时按 `None` 读取。`theme=custom` 必须携带完整的前景、背景、光标、选区与 16 个 ANSI `#RRGGBB` 颜色；其他预设只保存稳定 ID 并拒绝冗余 palette。companion SFTP 的 workspace ID、目录缓存和自动抑制状态仍为进程内状态，不写入 SQLite。
 
 M4 migration 3 新增 `snippets` 与 `efficiency_state`。片段的名称、标签、模板和参数整体使用记录级 AEAD；更新与软删除继续受 expected revision 约束。历史按 workspace 聚合在单个密文 payload 中，写入前去重并截断到最近 500 项；查询可按 connection ID 过滤且最多返回请求上限。portable export/import 包含片段，命令历史作为本机效率状态不进入 portable snapshot。监控 300 点环形缓冲、probe diagnostic、广播目标、远程编辑器内容和 ZMODEM/传输状态全部留在进程内。连接进入 Ready 时自动创建的详情监控同样不持久化，断开、锁定或进程退出即释放。
+
+M6 migration 4 在单一 SQLite 事务内重建 `proxy_profiles` 的明文 kind 约束以加入 `relay`，并原样复制 id、kind、revision、deleted_at 和加密 payload。relay payload 增加 `fallbackPort`、`relayServerName`、`relayMapping` 与 `relayCertificatePath`；所有字段使用 serde 默认值读取旧记录。中继 bearer token 与 RDP 密码不进入 payload：它们分别使用独立 OS keyring account，读取后进入 Rust 可清零容器。迁移测试从 schema 3 升级并逐字节验证旧 proxy payload 保留，同时验证新 `relay` kind 可插入。旧版应用无法解释 `relay` 枚举，降级前必须恢复升级前备份或先用 M6 删除 relay profile；不支持直接用 M4 二进制打开包含 relay profile 的 schema 4 工作区。
 
 ## 查询与搜索
 

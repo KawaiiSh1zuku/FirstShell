@@ -147,6 +147,13 @@ export function EntityDialog(props: EntityDialogProps) {
                   <label><input type="checkbox" checked={authentication === "agent" && opensshFallback} disabled={authentication !== "agent"} onChange={(event) => setOpensshFallback(event.target.checked)} /><span>允许 OpenSSH 兼容回退（仅 Agent）</span></label>
                 </div>
               </>}
+              {kind === "rdp" && (
+                <label>
+                  <span>RDP 密码</span>
+                  <input type="password" autoComplete="new-password" maxLength={4096} value={credential} placeholder={existingConnection ? "留空则保留已保存凭据" : "连接前必须保存凭据"} onChange={(event) => setCredential(event.target.value)} />
+                  <small>密码只保存到操作系统凭据库，通过认证的本地 IPC 单次传给隔离 helper。</small>
+                </label>
+              )}
               <label><span>标签</span><input maxLength={512} value={tags} onChange={(event) => setTags(event.target.value)} /></label>
             </>
           )}

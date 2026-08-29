@@ -97,7 +97,29 @@ CREATE TABLE efficiency_state (
 ) STRICT;
 ";
 
-const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_1), (2, MIGRATION_2), (3, MIGRATION_3)];
+const MIGRATION_4: &str = "
+ALTER TABLE proxy_profiles RENAME TO proxy_profiles_before_relay;
+
+CREATE TABLE proxy_profiles (
+    id TEXT PRIMARY KEY NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('direct', 'socks5', 'http_connect', 'system', 'relay')),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    deleted_at INTEGER,
+    payload BLOB NOT NULL
+) STRICT;
+
+INSERT INTO proxy_profiles(id, kind, revision, deleted_at, payload)
+SELECT id, kind, revision, deleted_at, payload FROM proxy_profiles_before_relay;
+
+DROP TABLE proxy_profiles_before_relay;
+";
+
+const MIGRATIONS: &[(u32, &str)] = &[
+    (1, MIGRATION_1),
+    (2, MIGRATION_2),
+    (3, MIGRATION_3),
+    (4, MIGRATION_4),
+];
 
 /// Effective `SQLite` safety and concurrency settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1218,7 +1240,7 @@ mod tests {
         let directory = tempdir()?;
         let actor = DbActor::open(directory.path().join("vault.db")).await?;
         let settings = actor.settings().await?;
-        assert_eq!(settings.schema_version, 3);
+        assert_eq!(settings.schema_version, 4);
         assert_eq!(settings.journal_mode, "wal");
         assert!(settings.foreign_keys);
 
@@ -1272,7 +1294,7 @@ mod tests {
         }
 
         let actor = DbActor::open(&database).await?;
-        assert_eq!(actor.settings().await?.schema_version, 3);
+        assert_eq!(actor.settings().await?.schema_version, 4);
         assert!(actor.vault_metadata().await?.is_none());
         actor.shutdown().await?;
 
@@ -1289,6 +1311,52 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(slots, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn m3_database_should_preserve_proxy_rows_during_relay_upgrade()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let database = directory.path().join("vault.db");
+        {
+            let connection = Connection::open(&database)?;
+            connection.execute_batch(MIGRATION_1)?;
+            connection.execute_batch(MIGRATION_2)?;
+            connection.execute_batch(MIGRATION_3)?;
+            connection.execute_batch(
+                "CREATE TABLE schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    checksum TEXT NOT NULL
+                ) STRICT;",
+            )?;
+            for (version, migration) in [(1, MIGRATION_1), (2, MIGRATION_2), (3, MIGRATION_3)] {
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, checksum) VALUES (?1, ?2)",
+                    params![version, migration_checksum(migration)],
+                )?;
+            }
+            connection.execute(
+                "INSERT INTO proxy_profiles(id, kind, revision, payload) VALUES ('proxy-1', 'socks5', 7, X'010203')",
+                [],
+            )?;
+        }
+
+        let actor = DbActor::open(&database).await?;
+        assert_eq!(actor.settings().await?.schema_version, 4);
+        actor.shutdown().await?;
+
+        let connection = Connection::open(database)?;
+        let row: (String, i64, Vec<u8>) = connection.query_row(
+            "SELECT kind, revision, payload FROM proxy_profiles WHERE id = 'proxy-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(row, ("socks5".to_owned(), 7, vec![1, 2, 3]));
+        connection.execute(
+            "INSERT INTO proxy_profiles(id, kind, revision, payload) VALUES ('relay-1', 'relay', 1, X'04')",
+            [],
+        )?;
         Ok(())
     }
 

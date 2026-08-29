@@ -4,6 +4,7 @@
 mod commands;
 mod ipc_benchmark;
 mod m4_commands;
+mod rdp_commands;
 mod session_commands;
 mod transfer_commands;
 
@@ -27,7 +28,7 @@ fn application_info(window: WebviewWindow) -> Result<ApplicationInfo, PublicErro
     }
     Ok(ApplicationInfo {
         name: "FirstShell",
-        milestone: "M4",
+        milestone: "M6",
     })
 }
 
@@ -82,11 +83,13 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     ));
     let operations = Arc::new(transfer_commands::DesktopOperations::new());
     let tools = Arc::new(m4_commands::DesktopTools::new());
+    let rdp = Arc::new(rdp_commands::DesktopRdp::new());
     app.manage(DesktopState {
         workspace: Arc::clone(&workspace),
         sessions: Arc::clone(&sessions),
         operations: Arc::clone(&operations),
         tools: Arc::clone(&tools),
+        rdp: Arc::clone(&rdp),
     });
 
     let app_handle = app.handle().clone();
@@ -98,6 +101,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 sessions.close_all().await;
                 operations.close_all().await;
                 tools.close_all().await;
+                rdp.close_all().await;
                 let _ = app_handle.emit_to("main", "vault-locked", ());
             }
         }
@@ -162,6 +166,10 @@ fn main() {
             session_commands::approve_host_key,
             session_commands::start_session_log,
             session_commands::stop_session_log,
+            rdp_commands::configure_rdp_credential,
+            rdp_commands::rdp_credential_status,
+            rdp_commands::open_rdp_session,
+            rdp_commands::close_rdp_session,
             transfer_commands::open_sftp_workspace,
             transfer_commands::approve_sftp_host_key,
             transfer_commands::close_sftp_workspace,

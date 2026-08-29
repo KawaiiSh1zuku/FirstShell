@@ -4,43 +4,20 @@
 
 use std::process::Stdio;
 
-use firstshell_rdp_protocol::{Handshake, HandshakeResponse, PROTOCOL_VERSION};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use firstshell_rdp_protocol::{
+    DesktopRequest, Handshake, HandshakeResponse, HelperEvent, HelperState, PROTOCOL_VERSION,
+    read_frame, write_frame,
+};
+use tokio::io::AsyncWriteExt;
 use tokio::net::windows::named_pipe::ServerOptions;
 use tokio::process::Command;
 use uuid::Uuid;
-
-const MAX_FRAME_BYTES: usize = 4096;
-
-async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(
-    writer: &mut W,
-    value: &T,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let payload = serde_json::to_vec(value)?;
-    assert!(payload.len() <= MAX_FRAME_BYTES);
-    writer.write_u32_le(u32::try_from(payload.len())?).await?;
-    writer.write_all(&payload).await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-async fn read_frame<R: AsyncRead + Unpin, T: DeserializeOwned>(
-    reader: &mut R,
-) -> Result<T, Box<dyn std::error::Error>> {
-    let length = reader.read_u32_le().await? as usize;
-    assert!(length <= MAX_FRAME_BYTES);
-    let mut payload = vec![0_u8; length];
-    reader.read_exact(&mut payload).await?;
-    Ok(serde_json::from_slice(&payload)?)
-}
 
 async fn run_handshake_case(
     supplied_token: &str,
     expected_token: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let pipe_name = format!(r"\\.\pipe\firstshell-m0-{}", Uuid::new_v4());
+    let pipe_name = format!(r"\\.\pipe\firstshell-rdp-{}", Uuid::new_v4());
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
         .reject_remote_clients(true)
@@ -50,7 +27,7 @@ async fn run_handshake_case(
         .arg(&pipe_name)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .spawn()?;
     let mut child_stdin = child.stdin.take().ok_or("helper stdin was not piped")?;
     child_stdin.write_all(supplied_token.as_bytes()).await?;
@@ -67,6 +44,20 @@ async fn run_handshake_case(
         },
     )
     .await?;
+    if accepted {
+        write_frame(&mut server, &DesktopRequest::Ping).await?;
+        assert_eq!(
+            read_frame::<_, HelperEvent>(&mut server).await?,
+            HelperEvent::Pong
+        );
+        write_frame(&mut server, &DesktopRequest::Stop).await?;
+        assert_eq!(
+            read_frame::<_, HelperEvent>(&mut server).await?,
+            HelperEvent::State {
+                state: HelperState::Stopped,
+            }
+        );
+    }
     let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await??;
     Ok(status.success())
 }

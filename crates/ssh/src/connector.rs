@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use firstshell_relay_client::RelayConnectSpec;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
@@ -103,6 +104,8 @@ pub enum ProxyRoute {
     HttpConnect(ProxyEndpoint),
     /// Resolve the operating-system proxy once for this connection.
     System,
+    /// Use a direct-first `FirstShell` relay profile with encrypted fallback.
+    Relay(RelayConnectSpec),
 }
 
 /// Type-erased async byte stream accepted by `russh::client::connect_stream`.
@@ -205,6 +208,10 @@ async fn connect_route(
                     .map_err(|_| ConnectorError::SystemProxyUnavailable)??;
             Box::pin(connect_route(&route, &target)).await
         }
+        ProxyRoute::Relay(spec) => firstshell_relay_client::connect(spec)
+            .await
+            .map(|connection| BoxedStream::new(connection.stream))
+            .map_err(|_| ConnectorError::RelayUnavailable),
     }
 }
 
@@ -535,6 +542,9 @@ pub enum ConnectorError {
     /// The operating-system proxy could not be resolved safely.
     #[error("system proxy is unavailable")]
     SystemProxyUnavailable,
+    /// Direct, QUIC/TLS, and TCP/TLS relay routes were unavailable or rejected.
+    #[error("relay route is unavailable")]
+    RelayUnavailable,
     /// Underlying socket I/O failed.
     #[error("connector I/O failed")]
     Io(#[from] io::Error),

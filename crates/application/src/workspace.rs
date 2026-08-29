@@ -779,6 +779,10 @@ impl WorkspaceService {
             port: input.port,
             username: input.username.trim().to_owned(),
             dns_mode: input.dns_mode,
+            fallback_port: input.fallback_port,
+            relay_server_name: input.relay_server_name.trim().to_owned(),
+            relay_mapping: input.relay_mapping.trim().to_owned(),
+            relay_certificate_path: input.relay_certificate_path.trim().to_owned(),
         };
         self.db
             .save(self.seal_proxy(&proxy)?, None)
@@ -817,6 +821,10 @@ impl WorkspaceService {
             port: input.port,
             username: input.username.trim().to_owned(),
             dns_mode: input.dns_mode,
+            fallback_port: input.fallback_port,
+            relay_server_name: input.relay_server_name.trim().to_owned(),
+            relay_mapping: input.relay_mapping.trim().to_owned(),
+            relay_certificate_path: input.relay_certificate_path.trim().to_owned(),
         };
         self.db
             .save(self.seal_proxy(&proxy)?, Some(expected_revision))
@@ -1921,18 +1929,52 @@ fn validate_proxy_input(input: &ProxyInput) -> Result<(), PublicError> {
     validate_text("proxy name", &input.name, 1, 128)?;
     validate_text("proxy host", &input.host, 0, 253)?;
     validate_text("proxy username", &input.username, 0, 128)?;
+    validate_text("relay server name", &input.relay_server_name, 0, 253)?;
+    validate_text("relay mapping", &input.relay_mapping, 0, 128)?;
+    validate_text(
+        "relay certificate path",
+        &input.relay_certificate_path,
+        0,
+        4096,
+    )?;
     match input.kind {
         ProxyKind::Socks5 | ProxyKind::HttpConnect
             if input.host.trim().is_empty() || input.port == 0 =>
         {
             Err(invalid("network proxies require a host and port"))
         }
+        ProxyKind::Relay
+            if input.host.trim().is_empty()
+                || input.port == 0
+                || input.fallback_port == 0
+                || input.relay_server_name.trim().is_empty()
+                || input.relay_mapping.trim().is_empty()
+                || input.relay_certificate_path.trim().is_empty()
+                || !input.username.trim().is_empty() =>
+        {
+            Err(invalid(
+                "relay proxies require endpoints, TLS identity, certificate, and mapping without a username",
+            ))
+        }
         ProxyKind::Direct | ProxyKind::System
-            if !input.host.trim().is_empty() || input.port != 0 =>
+            if !input.host.trim().is_empty()
+                || input.port != 0
+                || input.fallback_port != 0
+                || !input.relay_server_name.trim().is_empty()
+                || !input.relay_mapping.trim().is_empty()
+                || !input.relay_certificate_path.trim().is_empty() =>
         {
             Err(invalid(
                 "direct and system proxies cannot contain an endpoint",
             ))
+        }
+        ProxyKind::Socks5 | ProxyKind::HttpConnect
+            if input.fallback_port != 0
+                || !input.relay_server_name.trim().is_empty()
+                || !input.relay_mapping.trim().is_empty()
+                || !input.relay_certificate_path.trim().is_empty() =>
+        {
+            Err(invalid("network proxies cannot contain relay settings"))
         }
         _ => Ok(()),
     }
@@ -2329,6 +2371,10 @@ fn validate_snapshot(snapshot: &WorkspaceSnapshot) -> Result<(), PublicError> {
             port: proxy.port,
             username: proxy.username.clone(),
             dns_mode: proxy.dns_mode,
+            fallback_port: proxy.fallback_port,
+            relay_server_name: proxy.relay_server_name.clone(),
+            relay_mapping: proxy.relay_mapping.clone(),
+            relay_certificate_path: proxy.relay_certificate_path.clone(),
         })?;
     }
     for terminal in &snapshot.terminal_profiles {
@@ -2404,6 +2450,7 @@ fn proxy_kind_name(kind: ProxyKind) -> &'static str {
         ProxyKind::Socks5 => "socks5",
         ProxyKind::HttpConnect => "http_connect",
         ProxyKind::System => "system",
+        ProxyKind::Relay => "relay",
     }
 }
 
@@ -2895,6 +2942,29 @@ mod tests {
         assert_eq!(history[0].command, "echo history-504");
         assert_eq!(history[499].command, "echo history-5");
         Ok(())
+    }
+
+    #[test]
+    fn relay_proxy_should_require_complete_non_secret_routing_metadata() {
+        let mut input = ProxyInput {
+            kind: ProxyKind::Relay,
+            name: "Production relay".to_owned(),
+            host: "relay.example".to_owned(),
+            port: 9443,
+            username: String::new(),
+            dns_mode: firstshell_domain::ProxyDnsMode::Remote,
+            fallback_port: 9444,
+            relay_server_name: "relay.example".to_owned(),
+            relay_mapping: "ssh-prod".to_owned(),
+            relay_certificate_path: r"C:\relay\cert.pem".to_owned(),
+        };
+        assert!(validate_proxy_input(&input).is_ok());
+
+        input.fallback_port = 0;
+        assert!(validate_proxy_input(&input).is_err());
+        input.fallback_port = 9444;
+        input.username = "must-not-be-used-for-token".to_owned();
+        assert!(validate_proxy_input(&input).is_err());
     }
 
     fn snippet_parameter(name: &str, kind: SnippetParameterKind) -> SnippetParameter {

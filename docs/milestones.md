@@ -22,7 +22,7 @@
 | M3 | SFTP、代理、跳板与隧道 | M2 | Complete |
 | M4 | 主机监控与效率工具 | M3 | Complete |
 | M5 | 端到端加密同步 | M1；全量集成依赖 M4 | Deferred |
-| M6 | RDP 与自托管加速中继 | M2 | Not started |
+| M6 | RDP 与自托管加速中继 | M2 | In progress |
 | M7 | 跨平台、发布与稳定性 | M2-M6 | Not started |
 
 ```mermaid
@@ -157,12 +157,16 @@ flowchart LR
 
 主要交付：
 
-- Windows RDP helper、版本化认证 IPC、窗口嵌入/伴随模式和崩溃恢复。
-- 自托管 `relayd`、QUIC/TLS 主路径、TCP/TLS 回退和连接能力探测。
-- 中继身份认证、目标策略、端口映射、带宽/时长/并发配额和审计。
-- 一次性最小凭据传递，helper 与 relay 均不能获得 Vault Key。
+- [x] Windows RDP helper、版本化认证 IPC、伴随窗口、嵌入模式协议和显式重连。
+- [x] 自托管 `relayd`、QUIC/TLS 主路径、TCP/TLS 回退和直连优先选择器。
+- [x] 中继身份认证、服务端目标映射、带宽/时长/并发配额和结构化审计。
+- [x] RDP 密码与中继令牌使用独立 OS keyring 项；helper、FreeRDP 与 relay 均不能获得 Vault Key。
+- [ ] 随安装产物提供审查后的 FreeRDP 二进制，并通过真实 RDP 服务、窗口/DPI 与崩溃恢复验收。
+- [ ] 在可用 UDP 环境通过真实 QUIC/TLS 互操作、降级、长时资源与恶意配额边界验收。
 
 退出门槛：helper 崩溃不影响 SSH/SFTP；IPC 劫持、未授权目标、配额绕过、协议降级和资源耗尽测试通过；直连优先和回退行为可观测。
+
+当前证据：[M6 验收记录](./verification/m6.md)。实现和本地自动化已覆盖 helper 认证、协议注入拒绝、目标策略、并发配额、直连优先及真实 TCP/TLS 回退；本机没有可分发的 `wfreerdp.exe`，且 Windows 本地 QUIC 测试尚未完成握手，因此 M6 保持 `In progress`，不得标记为 `Complete`。
 
 ## M7 跨平台、发布与稳定性
 

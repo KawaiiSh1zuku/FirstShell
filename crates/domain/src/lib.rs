@@ -118,6 +118,8 @@ pub enum ProxyKind {
     HttpConnect,
     /// Resolve the system proxy once when opening the session.
     System,
+    /// Direct-first `FirstShell` relay with QUIC/TLS and TCP/TLS fallback.
+    Relay,
 }
 
 /// Proxy-side target name resolution policy.
@@ -274,6 +276,18 @@ pub struct ProxyProfile {
     /// Whether the proxy or local client resolves target hostnames.
     #[serde(default)]
     pub dns_mode: ProxyDnsMode,
+    /// TCP/TLS fallback port for relay profiles.
+    #[serde(default)]
+    pub fallback_port: u16,
+    /// TLS server name verified against the configured relay certificate.
+    #[serde(default)]
+    pub relay_server_name: String,
+    /// Server-defined relay target mapping; clients cannot submit arbitrary targets.
+    #[serde(default)]
+    pub relay_mapping: String,
+    /// Local PEM or DER certificate path used as the relay trust root.
+    #[serde(default)]
+    pub relay_certificate_path: String,
 }
 
 /// Input used to create or update a proxy profile.
@@ -293,6 +307,18 @@ pub struct ProxyInput {
     /// Whether the proxy or local client resolves target hostnames.
     #[serde(default)]
     pub dns_mode: ProxyDnsMode,
+    /// TCP/TLS fallback port for relay profiles.
+    #[serde(default)]
+    pub fallback_port: u16,
+    /// TLS server name verified against the configured relay certificate.
+    #[serde(default)]
+    pub relay_server_name: String,
+    /// Server-defined relay target mapping.
+    #[serde(default)]
+    pub relay_mapping: String,
+    /// Local PEM or DER certificate path used as the relay trust root.
+    #[serde(default)]
+    pub relay_certificate_path: String,
 }
 
 /// Decrypted terminal appearance and behavior profile.

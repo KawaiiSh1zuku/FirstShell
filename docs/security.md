@@ -102,9 +102,9 @@ M4 监控只接受固定 host/process/port/ping/traceroute 模板。ping/tracero
 
 ## 中继与远程桌面
 
-中继服务只转发经认证、受配额限制的不透明字节流。优先 QUIC/TLS，受限网络回退 TCP/TLS。中继不得获得 SSH/RDP 凭据，不得默认开放任意公网端口映射；目标、端口、时长和带宽由客户端授权和服务端策略共同限制。
+中继服务只转发经认证、受配额限制的不透明字节流。客户端先尝试直连，再尝试 QUIC/TLS，受限网络最后回退 TCP/TLS；TLS 只信任 profile 指定证书并验证服务名。客户端 hello 只包含协议版本、bearer token 和 mapping 名称，不能提交任意 host/port。`relayd` 以 token SHA-256 常量时间匹配 client policy，再校验 mapping 白名单、全局/单 client 并发、最大时长、总字节和带宽；审计只记录随机 session ID、client ID、mapping、transport、结果和字节数，不记录 token 或转发内容。中继仍会看到映射名称、client ID、连接时序和流量大小，因此不是匿名网络。
 
-RDP helper 使用独立进程和版本化本地 IPC。IPC 连接采用每次启动随机令牌，限制本机访问并校验对端身份。helper 不接触 Vault Key，只接收单次连接所需的最小凭据；崩溃转储和日志默认关闭敏感内容。
+RDP helper 使用独立进程和有 64 KiB 帧上限的版本化本地 IPC。桌面进程创建拒绝远程客户端的随机 named pipe；每次启动随机令牌只通过 helper stdin 传递，正确令牌和协议版本通过后才发送单次连接参数。helper 不搜索 `PATH`，只启动自身目录中的 `wfreerdp.exe`；唯一 argv 是 `/args-from:stdin`，RDP 密码不会进入 argv 或环境变量。桌面和 helper 在发送后主动清零各自的一次性密码副本，Debug、公开事件和审计固定脱敏。helper 不接触 Vault Key，崩溃不会直接破坏 SSH/SFTP/Vault 进程；当前 companion 窗口使用 TOFU 证书策略，发布验收仍需覆盖首次信任和证书变化行为。
 
 ## 更新与供应链
 
