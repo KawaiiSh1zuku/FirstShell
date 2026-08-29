@@ -19,7 +19,7 @@ interface EntityDialogProps {
   error: string | null;
   onClose(): void;
   onSaveFolder(input: FolderInput, existing?: Folder): Promise<void>;
-  onSaveConnection(input: ConnectionInput, existing?: ConnectionProfile): Promise<void>;
+  onSaveConnection(input: ConnectionInput, existing?: ConnectionProfile, credential?: string): Promise<void>;
 }
 
 export function EntityDialog(props: EntityDialogProps) {
@@ -38,6 +38,7 @@ export function EntityDialog(props: EntityDialogProps) {
   const [terminalId, setTerminalId] = useState(existingConnection?.terminalProfileId ?? "");
   const [authentication, setAuthentication] = useState<ConnectionInput["authentication"]>(existingConnection?.authentication ?? "agent");
   const [privateKeyPath, setPrivateKeyPath] = useState(existingConnection?.privateKeyPath ?? "");
+  const [credential, setCredential] = useState("");
   const [allowLegacyAlgorithms, setAllowLegacyAlgorithms] = useState(existingConnection?.allowLegacyAlgorithms ?? false);
   const [opensshFallback, setOpensshFallback] = useState(existingConnection?.opensshFallback ?? false);
   const [tags, setTags] = useState(existingConnection?.tags.join(", ") ?? "");
@@ -79,6 +80,7 @@ export function EntityDialog(props: EntityDialogProps) {
           notes,
         },
         existingConnection,
+        credential || undefined,
       );
     } catch {
       // The parent keeps the dialog open and renders the redacted command error.
@@ -126,6 +128,20 @@ export function EntityDialog(props: EntityDialogProps) {
                   <label><span>认证</span><select value={authentication} onChange={(event) => setAuthentication(event.target.value as ConnectionInput["authentication"])}><option value="agent">SSH Agent</option><option value="password">密码</option><option value="private_key">私钥</option><option value="keyboard_interactive">Keyboard Interactive</option></select></label>
                   {authentication === "private_key" ? <label><span>私钥路径</span><input required maxLength={4096} value={privateKeyPath} onChange={(event) => setPrivateKeyPath(event.target.value)} /></label> : <span />}
                 </div>
+                {authentication !== "agent" && (
+                  <label>
+                    <span>{authentication === "private_key" ? "私钥口令" : "SSH 凭据"}</span>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      maxLength={4096}
+                      value={credential}
+                      placeholder={existingConnection ? "留空则保留已保存凭据" : "可稍后在连接时填写"}
+                      onChange={(event) => setCredential(event.target.value)}
+                    />
+                    <small>凭据保存到操作系统凭据库，不写入工作区数据库。</small>
+                  </label>
+                )}
                 <div className="binary-options">
                   <label><input type="checkbox" checked={allowLegacyAlgorithms} onChange={(event) => setAllowLegacyAlgorithms(event.target.checked)} /><span>允许此主机使用兼容算法</span></label>
                   <label><input type="checkbox" checked={authentication === "agent" && opensshFallback} disabled={authentication !== "agent"} onChange={(event) => setOpensshFallback(event.target.checked)} /><span>允许 OpenSSH 兼容回退（仅 Agent）</span></label>

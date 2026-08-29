@@ -29,6 +29,7 @@ const MAX_CONCURRENT_TRANSFERS: usize = 2;
 const MAX_STAGED_DROP_BATCHES: usize = 8;
 const MAX_UPLOAD_FILES: usize = 64;
 const STAGED_DROP_TTL: Duration = Duration::from_secs(5 * 60);
+const SYSTEM_SFTP_ROOT: &str = "/";
 
 /// Desktop-owned bulk-operation state. Secrets and local paths remain inside this boundary.
 pub struct DesktopOperations {
@@ -289,7 +290,6 @@ impl Default for DesktopOperations {
 enum SftpRecord {
     Pending {
         connection_id: ConnectionId,
-        root: String,
         factory: Arc<SshSessionFactory>,
     },
     Ready {
@@ -368,15 +368,11 @@ pub async fn open_sftp_workspace(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
     connection_id: ConnectionId,
-    root: String,
 ) -> Result<SftpWorkspaceSnapshot, PublicError> {
     authorize(&window)?;
-    if root.is_empty() || root.len() > 4096 {
-        return Err(public(ErrorCode::InvalidInput, "SFTP root is invalid"));
-    }
     let factory = resolve_ssh_connection(&state, connection_id).await?.factory;
     let id = Uuid::new_v4();
-    match factory.open_sftp(&root).await {
+    match factory.open_sftp(SYSTEM_SFTP_ROOT).await {
         Ok(workspace) => {
             let root = workspace.root().to_owned();
             state.operations.sftp_workspaces.lock().await.insert(
@@ -399,14 +395,13 @@ pub async fn open_sftp_workspace(
                 id,
                 SftpRecord::Pending {
                     connection_id,
-                    root: root.clone(),
                     factory,
                 },
             );
             Ok(SftpWorkspaceSnapshot {
                 id,
                 connection_id,
-                root,
+                root: SYSTEM_SFTP_ROOT.to_owned(),
                 state: SftpWorkspaceState::HostKeyRequired,
                 host_key,
             })
@@ -438,7 +433,6 @@ pub async fn approve_sftp_host_key(
         .ok_or_else(|| public(ErrorCode::NotFound, "SFTP workspace not found"))?;
     let SftpRecord::Pending {
         connection_id,
-        root,
         factory,
     } = record
     else {
@@ -448,7 +442,7 @@ pub async fn approve_sftp_host_key(
         ));
     };
     approve_factory(&factory, &fingerprint, previous_fingerprint.as_deref())?;
-    match factory.open_sftp(&root).await {
+    match factory.open_sftp(SYSTEM_SFTP_ROOT).await {
         Ok(workspace) => {
             let canonical_root = workspace.root().to_owned();
             state.operations.sftp_workspaces.lock().await.insert(
@@ -468,7 +462,7 @@ pub async fn approve_sftp_host_key(
         Err(_) if factory.pending_host_key().is_some() => Ok(SftpWorkspaceSnapshot {
             id: workspace_id,
             connection_id,
-            root,
+            root: SYSTEM_SFTP_ROOT.to_owned(),
             state: SftpWorkspaceState::HostKeyRequired,
             host_key: factory.pending_host_key().map(Into::into),
         }),

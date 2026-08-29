@@ -1,20 +1,16 @@
-import { Activity, FileCode2, History, RadioTower, Search, Send, Server, Tags, Timer, Wrench } from "lucide-react";
+import { FileCode2, History, RadioTower, Search, Send, Tags, Wrench } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { WorkspaceBridge } from "./bridge";
 import type {
   CommandHistoryEntry,
   ConnectionProfile,
-  MonitorEvent,
-  MonitorSnapshot,
-  ProbeKind,
-  ProbeResult,
   ReadyTerminalSession,
   Snippet,
   SnippetInput,
   SnippetParameter,
 } from "./types";
 
-type ToolTab = "monitor" | "snippets" | "history" | "broadcast";
+type ToolTab = "snippets" | "history" | "broadcast";
 
 interface ToolsWorkspaceProps {
   bridge: WorkspaceBridge;
@@ -28,15 +24,13 @@ interface ToolsWorkspaceProps {
 }
 
 export function ToolsWorkspace(props: ToolsWorkspaceProps) {
-  const [tab, setTab] = useState<ToolTab>("monitor");
+  const [tab, setTab] = useState<ToolTab>("snippets");
   return <div className="tools-workspace">
     <nav className="tools-tabs" aria-label="效率工具">
-      <ToolTabButton value="monitor" active={tab} onSelect={setTab} icon={<Activity size={13} />}>监控</ToolTabButton>
       <ToolTabButton value="snippets" active={tab} onSelect={setTab} icon={<FileCode2 size={13} />}>片段</ToolTabButton>
       <ToolTabButton value="history" active={tab} onSelect={setTab} icon={<History size={13} />}>历史</ToolTabButton>
       <ToolTabButton value="broadcast" active={tab} onSelect={setTab} icon={<RadioTower size={13} />}>广播</ToolTabButton>
     </nav>
-    {tab === "monitor" && <MonitorTool {...props} />}
     {tab === "snippets" && <SnippetTool {...props} />}
     {tab === "history" && <HistoryTool {...props} />}
     {tab === "broadcast" && <BroadcastTool {...props} />}
@@ -45,103 +39,6 @@ export function ToolsWorkspace(props: ToolsWorkspaceProps) {
 
 function ToolTabButton({ value, active, onSelect, icon, children }: { value: ToolTab; active: ToolTab; onSelect(value: ToolTab): void; icon: React.ReactNode; children: React.ReactNode }) {
   return <button type="button" aria-current={active === value} onClick={() => onSelect(value)}>{icon}<span>{children}</span></button>;
-}
-
-function MonitorTool(props: ToolsWorkspaceProps) {
-  const sshConnections = useMemo(() => props.connections.filter((value) => value.kind === "ssh" && !value.temporary), [props.connections]);
-  const [connectionId, setConnectionId] = useState(props.activeConnectionId ?? sshConnections[0]?.id ?? "");
-  const [intervalSeconds, setIntervalSeconds] = useState(5);
-  const [monitor, setMonitor] = useState<MonitorSnapshot | null>(null);
-  const [history, setHistory] = useState<ProbeResult[]>([]);
-  const [probeType, setProbeType] = useState<"processes" | "listening_ports" | "ping" | "traceroute">("processes");
-  const [target, setTarget] = useState("");
-  const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (props.activeConnectionId && sshConnections.some((value) => value.id === props.activeConnectionId)) setConnectionId(props.activeConnectionId);
-  }, [props.activeConnectionId, sshConnections]);
-
-  const onMonitorEvent = (event: MonitorEvent) => {
-    if (event.sample) {
-      setHistory((current) => [...current, event.sample!].slice(-60));
-      setMonitor((current) => current ? { ...current, state: event.state, sampleCount: current.sampleCount + 1, diagnostic: null } : current);
-    } else if (event.diagnostic) {
-      setMonitor((current) => current ? { ...current, state: event.state, diagnostic: event.diagnostic } : current);
-    }
-  };
-
-  const start = async () => {
-    setBusy(true); setError(null); setHistory([]);
-    try {
-      const next = await props.bridge.startHostMonitor(connectionId, intervalSeconds, onMonitorEvent);
-      setMonitor(next);
-      props.onActivity(next.state === "host_key_required" ? "主机监控等待密钥确认" : "主机监控已启动");
-    } catch (reason) { setError(message(reason)); }
-    finally { setBusy(false); }
-  };
-
-  const stop = async () => {
-    if (!monitor) return;
-    setBusy(true); setError(null);
-    try { await props.bridge.stopHostMonitor(monitor.id); setMonitor(null); setHistory([]); props.onActivity("主机监控已停止"); }
-    catch (reason) { setError(message(reason)); }
-    finally { setBusy(false); }
-  };
-
-  const approve = async () => {
-    if (!monitor?.hostKey) return;
-    setBusy(true); setError(null);
-    try {
-      const next = await props.bridge.approveMonitorHostKey(monitor.id, monitor.hostKey.fingerprint, monitor.hostKey.previousFingerprint);
-      setMonitor(next); props.onActivity("主机监控密钥已确认");
-    } catch (reason) { setError(message(reason)); }
-    finally { setBusy(false); }
-  };
-
-  const runProbe = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(null);
-    const probe: ProbeKind = probeType === "ping"
-      ? { type: "ping", target, count: 4 }
-      : probeType === "traceroute"
-        ? { type: "traceroute", target, max_hops: 20 }
-        : { type: probeType };
-    try { setProbeResult(await props.bridge.runHostProbe(connectionId, probe)); }
-    catch (reason) { setError(message(reason)); }
-    finally { setBusy(false); }
-  };
-
-  const latest = history.at(-1);
-  return <section className="tool-pane monitor-tool">
-    <div className="tool-controls">
-      <label className="tool-field connection-field"><span><Server size={12} />监控连接</span><select aria-label="监控连接" value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>{sshConnections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select></label>
-      <label className="tool-field interval-field"><span><Timer size={12} />周期</span><span className="number-suffix"><input aria-label="监控周期" type="number" min={2} max={60} value={intervalSeconds} onChange={(event) => setIntervalSeconds(Number(event.target.value))} /><small>秒</small></span></label>
-      {!monitor ? <button className="primary-command tool-control-action" type="button" disabled={!connectionId || busy} onClick={() => void start()}>启动</button> : <button className="tool-control-action" type="button" disabled={busy} onClick={() => void stop()}>停止</button>}
-    </div>
-    {error && <div className="tool-error" role="alert">{error}</div>}
-    {monitor?.state === "host_key_required" && monitor.hostKey && <div className="tool-host-key"><strong>确认 {monitor.hostKey.host}:{monitor.hostKey.port}</strong><code>{monitor.hostKey.fingerprint}</code><button type="button" onClick={() => void approve()}>信任并启动</button></div>}
-    {monitor && monitor.state !== "host_key_required" && <>
-      <div className="monitor-status"><span className={monitor.state}>{monitor.state === "degraded" ? "诊断降级" : "采样中"}</span><small>{history.length} / 300 点 · {monitor.intervalSeconds}s</small></div>
-      <div className="metric-grid">{latest?.metrics.map((metric) => <div key={metric.key}><small>{metric.key}</small><strong>{formatMetric(metric.value)} <em>{metric.unit}</em></strong><MiniTrend values={history.map((sample) => sample.metrics.find((value) => value.key === metric.key)?.value).filter((value): value is number => value !== undefined)} /></div>)}{!latest && <div className="empty-list">等待首个样本</div>}</div>
-      {monitor.diagnostic && <div className="tool-error">{monitor.diagnostic}</div>}
-    </>}
-    <form className="probe-form" onSubmit={(event) => void runProbe(event)}>
-      <label className="tool-field"><span><Wrench size={12} />诊断工具</span><select aria-label="诊断探针" value={probeType} onChange={(event) => setProbeType(event.target.value as typeof probeType)}><option value="processes">进程</option><option value="listening_ports">监听端口</option><option value="ping">Ping</option><option value="traceroute">Traceroute</option></select></label>
-      {(probeType === "ping" || probeType === "traceroute") && <label className="tool-field"><span><Search size={12} />目标</span><input aria-label="诊断目标" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="host.example" /></label>}
-      <button className="tool-control-action" type="submit" disabled={!connectionId || busy || ((probeType === "ping" || probeType === "traceroute") && !target.trim())}>运行</button>
-    </form>
-    {probeResult && <ProbeResultView result={probeResult} />}
-  </section>;
-}
-
-function MiniTrend({ values }: { values: number[] }) {
-  const max = Math.max(...values, 1);
-  return <div className="mini-trend" aria-label={`${values.length} 个采样点`}>{values.slice(-24).map((value, index) => <i key={index} style={{ height: `${Math.max(5, value / max * 100)}%` }} />)}</div>;
-}
-
-function ProbeResultView({ result }: { result: ProbeResult }) {
-  return <div className="probe-result"><div className="metric-grid compact">{result.metrics.map((metric) => <div key={metric.key}><small>{metric.key}</small><strong>{formatMetric(metric.value)} {metric.unit}</strong></div>)}</div>{result.rows.length > 0 && <div className="probe-rows">{result.rows.map((row, index) => <div key={`${row.kind}-${index}`}><small>{row.kind}</small>{row.cells.map((cell, cellIndex) => <span key={cellIndex}>{cell}</span>)}</div>)}</div>}{result.diagnostic && <div className="tool-error">{result.diagnostic}</div>}</div>;
 }
 
 function SnippetTool(props: ToolsWorkspaceProps) {
@@ -233,5 +130,4 @@ function emptyParameter(index: number): SnippetParameter {
   return { name: `value${index}`, label: `参数 ${index}`, kind: "text", required: true, defaultValue: "", choices: [] };
 }
 
-function formatMetric(value: number) { return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(2); }
 function message(reason: unknown) { return reason instanceof Error ? reason.message : typeof reason === "object" && reason && "message" in reason ? String((reason as { message: unknown }).message) : "操作失败"; }

@@ -9,6 +9,7 @@ import type {
   WorkspaceSnapshot,
 } from "./types";
 import { DEFAULT_CUSTOM_PALETTE, resolveTerminalTheme, TERMINAL_THEME_PRESETS } from "./terminalThemes";
+import { CredentialDialog } from "./CredentialDialog";
 
 interface SettingsDialogProps {
   snapshot: WorkspaceSnapshot;
@@ -17,7 +18,7 @@ interface SettingsDialogProps {
   onClose(): void;
   onSaveProxy(input: ProxyInput, existing?: ProxyProfile): Promise<void>;
   onDeleteProxy(value: ProxyProfile): Promise<void>;
-  onConfigureProxyCredential(value: ProxyProfile): Promise<boolean>;
+  onConfigureProxyCredential(value: ProxyProfile, secret: string): Promise<void>;
   proxyCredentialStatus(value: ProxyProfile): Promise<boolean>;
   onSaveTerminal(input: TerminalProfileInput, existing?: TerminalProfile): Promise<void>;
   onDeleteTerminal(value: TerminalProfile): Promise<void>;
@@ -28,6 +29,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
   const [editingProxy, setEditingProxy] = useState<ProxyProfile | null | undefined>(undefined);
   const [editingTerminal, setEditingTerminal] = useState<TerminalProfile | null | undefined>(undefined);
   const [proxyCredentials, setProxyCredentials] = useState<Record<string, boolean>>({});
+  const [credentialProxy, setCredentialProxy] = useState<ProxyProfile | null>(null);
 
   useEffect(() => {
     if (tab !== "proxy" || editingProxy !== undefined) return;
@@ -61,7 +63,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   onAdd={() => setEditingProxy(null)}
                   onEdit={(value) => setEditingProxy(value)}
                   onDelete={props.onDeleteProxy}
-                  extraAction={(value) => value.username && (value.kind === "socks5" || value.kind === "http_connect") ? <button className="icon-button" type="button" aria-label={`配置 ${value.name} 的代理凭据`} title="配置代理凭据" onClick={() => void props.onConfigureProxyCredential(value).then((configured) => { if (configured) setProxyCredentials((current) => ({ ...current, [value.id]: true })); }).catch(() => undefined)}><KeyRound size={15} /></button> : null}
+                  extraAction={(value) => value.username && (value.kind === "socks5" || value.kind === "http_connect") ? <button className="icon-button" type="button" aria-label={`配置 ${value.name} 的代理凭据`} title="配置代理凭据" onClick={() => setCredentialProxy(value)}><KeyRound size={15} /></button> : null}
                 />
               ) : (
                 <ProxyForm value={editingProxy ?? undefined} busy={props.busy} error={props.error} onCancel={() => setEditingProxy(undefined)} onSave={async (input) => { try { await props.onSaveProxy(input, editingProxy ?? undefined); setEditingProxy(undefined); } catch {} }} />
@@ -82,6 +84,19 @@ export function SettingsDialog(props: SettingsDialogProps) {
           </div>
         </div>
       </section>
+      {credentialProxy && (
+        <CredentialDialog
+          title="保存代理密码"
+          description={`${credentialProxy.name} · ${credentialProxy.username}`}
+          label="代理密码"
+          persistent
+          onClose={() => setCredentialProxy(null)}
+          onSubmit={async (secret) => {
+            await props.onConfigureProxyCredential(credentialProxy, secret);
+            setProxyCredentials((current) => ({ ...current, [credentialProxy.id]: true }));
+          }}
+        />
+      )}
     </div>
   );
 }

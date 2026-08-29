@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPreviewBridge } from "./bridge";
@@ -42,16 +42,16 @@ describe("M3 operations workspace", () => {
     const view = render(<OperationsWorkspace {...props} readyConnectionIds={[connection.id]} />);
 
     expect(await screen.findByRole("tree", { name: "远程目录树" })).toBeTruthy();
-    expect(open).toHaveBeenCalledWith(connection.id, ".");
+    expect(open).toHaveBeenCalledWith(connection.id);
     const address = screen.getByRole("textbox", { name: "远程地址" });
-    await waitFor(() => expect((address as HTMLInputElement).value).toBe("/home/preview"));
+    await waitFor(() => expect((address as HTMLInputElement).value).toBe("/"));
     await user.clear(address);
-    await user.type(address, "/home/preview/logs{Enter}");
+    await user.type(address, "/logs{Enter}");
     await waitFor(() => expect(list).toHaveBeenCalledWith(expect.any(String), "logs"));
     await user.clear(address);
     await user.type(address, "/etc{Enter}");
-    expect(address.getAttribute("aria-invalid")).toBe("true");
-    expect(list).not.toHaveBeenCalledWith(expect.any(String), "etc");
+    await waitFor(() => expect(list).toHaveBeenCalledWith(expect.any(String), "etc"));
+    expect(address.getAttribute("aria-invalid")).toBe("false");
 
     view.rerender(<OperationsWorkspace {...props} readyConnectionIds={[]} />);
     await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
@@ -98,6 +98,25 @@ describe("M3 operations workspace", () => {
     await user.click(screen.getByRole("button", { name: "多文件上传" }));
     expect(await screen.findByText("archive.bin")).toBeTruthy();
     await waitFor(() => expect(screen.getByText(/已完成/)).toBeTruthy());
+  });
+
+  it("offers existing file and directory actions from context menus", async () => {
+    const bridge = createPreviewBridge();
+    const download = vi.spyOn(bridge, "chooseSftpDownload");
+    const upload = vi.spyOn(bridge, "chooseSftpUploads");
+    const user = userEvent.setup();
+    render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} readyConnectionIds={[]} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
+
+    await user.click(screen.getByRole("button", { name: "连接 SFTP" }));
+    const readme = await screen.findByRole("row", { name: /README\.txt/ });
+    fireEvent.contextMenu(readme, { clientX: 90, clientY: 120 });
+    await user.click(screen.getByRole("menuitem", { name: "下载" }));
+    expect(download).toHaveBeenCalledWith(expect.any(String), "README.txt", expect.any(Object), expect.any(Function));
+
+    const grid = screen.getByRole("grid", { name: "远程文件" });
+    fireEvent.contextMenu(grid, { clientX: 120, clientY: 160 });
+    await user.click(screen.getByRole("menuitem", { name: "上传文件" }));
+    expect(upload).toHaveBeenCalledWith(expect.any(String), "", expect.any(Object), expect.any(Function));
   });
 
   it("consumes an opaque Rust-staged drop without receiving local paths", async () => {
@@ -172,7 +191,10 @@ describe("M3 operations workspace", () => {
     render(<OperationsWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} readyConnectionIds={[]} activities={[]} onActivity={() => undefined} onCollapse={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: /^传输/ }));
-    await user.click(await screen.findByRole("button", { name: "暂停 large.bin" }));
+    const transferRow = (await screen.findByText("large.bin")).closest(".transfer-row");
+    expect(transferRow).toBeTruthy();
+    fireEvent.contextMenu(transferRow!);
+    await user.click(screen.getByRole("menuitem", { name: "暂停传输" }));
     expect(await screen.findByText(/已暂停/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "恢复 large.bin" }));
     expect(bridge.pauseTransfer).toHaveBeenCalledWith("transfer-pause");

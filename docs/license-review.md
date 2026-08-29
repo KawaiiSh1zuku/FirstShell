@@ -15,7 +15,7 @@
 | 终端 | `@xterm/xterm`、`@xterm/addon-fit`、`portable-pty` | MIT | 与 AGPL-3.0-only 兼容；分发时保留上游许可证文本 |
 | 内置终端配色 | Solarized、Nord、Dracula、One Dark；Gruvbox（开发例外） | 前四项 MIT；Gruvbox 待确认 | 仅复用公开配色值，不引入运行时依赖；前四项发布 NOTICE 保留对应 MIT 声明；Gruvbox 在 M7 发布前必须取得明确授权或移除 |
 | 终端编码 | `encoding_rs` | (Apache-2.0 OR MIT) AND BSD-3-Clause | 与 AGPL-3.0-only 兼容；保留 Apache/MIT/BSD 文本与适用 notice |
-| 原生秘密输入 | `tinyfiledialogs` | zlib-acknowledgement | 与 AGPL-3.0-only 兼容；保留源文件声明，并在产品 NOTICE 中致谢 tinyfiledialogs |
+| 原生文件选择 | `tinyfiledialogs` | zlib-acknowledgement | 与 AGPL-3.0-only 兼容；保留源文件声明，并在产品 NOTICE 中致谢 tinyfiledialogs |
 | 密码学 | RustCrypto XChaCha20-Poly1305、HKDF、SHA-2 | MIT OR Apache-2.0 | 与 AGPL-3.0-only 兼容 |
 | 本地凭据 | `keyring` 及平台后端 | MIT OR Apache-2.0 | 与 AGPL-3.0-only 兼容 |
 | 数据库 | `rusqlite`、bundled SQLite | MIT / public domain SQLite | 与 AGPL-3.0-only 兼容 |

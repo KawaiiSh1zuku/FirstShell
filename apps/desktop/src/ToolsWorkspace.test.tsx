@@ -91,14 +91,15 @@ describe("M4 efficiency tools", () => {
     expect(stop).toHaveBeenCalledWith(["session-ready"]);
   });
 
-  it("starts bounded monitoring and reuses encrypted command history for insertion", async () => {
+  it("removes monitoring and diagnostics while reusing encrypted command history", async () => {
     const user = userEvent.setup();
     const bridge = createPreviewBridge();
     await bridge.recordCommand(connection.id, "cd /var/log");
     const onInsert = vi.fn();
     renderTools({ bridge, onInsert });
-    await user.click(screen.getByRole("button", { name: "启动" }));
-    expect(await screen.findByText("load_1m")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "监控" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "诊断" })).toBeNull();
+    expect(screen.getByRole("button", { name: "片段" }).getAttribute("aria-current")).toBe("true");
     await user.click(screen.getByRole("button", { name: "历史" }));
     await user.click(await screen.findByText("cd /var/log"));
     await waitFor(() => expect(onInsert).toHaveBeenCalledWith(connection.id, "cd /var/log"));

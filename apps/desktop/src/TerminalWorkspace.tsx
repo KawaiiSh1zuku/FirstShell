@@ -4,6 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 import { Columns2, FileText, KeyRound, Play, Rows2, ScrollText, Unplug, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkspaceBridge } from "./bridge";
+import { CredentialDialog } from "./CredentialDialog";
 import type {
   ConnectionProfile,
   DesktopSessionEvent,
@@ -171,7 +172,7 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
   const [error, setError] = useState<string | null>(null);
   const [hostKey, setHostKey] = useState<HostKeyEvidence | null>(null);
   const [logPath, setLogPath] = useState<string | null>(null);
-  const [credentialBusy, setCredentialBusy] = useState(false);
+  const [credentialOpen, setCredentialOpen] = useState(false);
   const textEncoder = useMemo(() => new TextEncoder(), []);
 
   const terminalSize = useCallback((): TerminalSize => {
@@ -210,7 +211,7 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
     }
   }, [bridge, onReadyChange, paneId]);
 
-  const connect = useCallback(async (generation = lifecycleRef.current) => {
+  const connect = useCallback(async (generation = lifecycleRef.current, credential: string | null = null) => {
     if (sessionIdRef.current) return;
     setError(null);
     setHostKey(null);
@@ -225,6 +226,7 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
             privateKeyPath: connection.privateKeyPath,
             allowLegacyAlgorithms: connection.allowLegacyAlgorithms,
             opensshFallback: connection.opensshFallback,
+            credential,
           }, terminalSize(), handleEvent)
         : await bridge.openTerminal(connection.id, terminalSize(), handleEvent);
       if (generation !== lifecycleRef.current || !terminalRef.current) {
@@ -326,16 +328,18 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
     setError(null);
   };
 
-  const configureCredential = async () => {
-    setCredentialBusy(true);
-    try {
-      if (await bridge.configureCredential(connection.id)) {
-        onActivity(`${connection.name} 凭据已写入系统密钥环`);
-        await reconnect();
-      }
-    } finally {
-      setCredentialBusy(false);
+  const configureCredential = async (secret: string) => {
+    const sessionId = sessionIdRef.current;
+    if (sessionId) {
+      sessionIdRef.current = null;
+      onReadyChange(paneId, sessionId, false);
+      await bridge.closeTerminal(sessionId).catch(() => undefined);
     }
+    if (!connection.temporary) {
+      await bridge.configureCredential(connection.id, secret);
+      onActivity(`${connection.name} 凭据已写入系统凭据库`);
+    }
+    await connect(lifecycleRef.current, connection.temporary ? secret : null);
   };
 
   const toggleLog = async () => {
@@ -353,8 +357,7 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
   };
 
   const needsCredential = connection.kind === "ssh"
-    && (connection.authentication === "password" || connection.authentication === "keyboard_interactive")
-    && error?.includes("credential");
+    && (connection.authentication === "password" || connection.authentication === "keyboard_interactive" || connection.authentication === "private_key");
 
   return (
     <div className={`terminal-pane ${active ? "active" : ""}`} onMouseDown={onActivate}>
@@ -372,8 +375,9 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
         <div><strong>{hostKey.changed ? "主机密钥已变化" : "首次连接确认"}</strong><span>{hostKey.host}:{hostKey.port} · {hostKey.algorithm}</span>{hostKey.previousFingerprint && <code>{hostKey.previousFingerprint}</code>}<code>{hostKey.fingerprint}</code></div>
         <button type="button" onClick={() => void approve()}>{hostKey.changed ? "替换并重连" : "信任并重连"}</button>
       </div>}
-      {error && !hostKey && <div className="terminal-error" role="alert"><Unplug size={17} /><span>{error}</span>{needsCredential && <button type="button" disabled={credentialBusy} onClick={() => void configureCredential()}><KeyRound size={14} />{credentialBusy ? "等待输入" : "配置凭据"}</button>}<button type="button" onClick={() => void reconnect()}><Play size={14} />重连</button></div>}
+      {error && !hostKey && <div className="terminal-error" role="alert"><Unplug size={17} /><span>{error}</span>{needsCredential && <button type="button" onClick={() => setCredentialOpen(true)}><KeyRound size={14} />配置凭据</button>}<button type="button" onClick={() => void reconnect()}><Play size={14} />重连</button></div>}
       {logPath && <div className="logging-indicator"><FileText size={12} />记录中</div>}
+      {credentialOpen && <CredentialDialog title={connection.authentication === "private_key" ? "输入私钥口令" : "输入 SSH 密码"} description={`${connection.username}@${connection.host}:${connection.port}`} label={connection.authentication === "private_key" ? "私钥口令" : "密码"} persistent={!connection.temporary} onClose={() => setCredentialOpen(false)} onSubmit={configureCredential} />}
     </div>
   );
 }

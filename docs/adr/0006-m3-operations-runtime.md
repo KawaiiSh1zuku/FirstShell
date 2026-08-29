@@ -6,7 +6,7 @@
 
 ## 背景
 
-M3 需要在 M2 的认证、host key 和双 lane 会话边界上增加 SFTP、代理、跳板链和三类隧道。网络路由和文件操作都必须复用同一套信任策略，同时避免让代理密码、本地绝对路径或任意文件系统能力进入 WebView。
+M3 需要在 M2 的认证、host key 和双 lane 会话边界上增加 SFTP、代理、跳板链和三类隧道。网络路由和文件操作都必须复用同一套信任策略，同时避免让代理密码进入前端持久状态或普通 DTO，并避免让本地绝对路径或任意文件系统能力进入 WebView。
 
 系统代理还存在实现边界：完整 PAC 需要 JavaScript 引擎、PAC 下载和额外 HTTP 信任面，而 M3 只需要可预测的静态代理选择。传输和隧道是短期运行资源；如果过早持久化，会把本地路径、partial 名和易失状态引入数据迁移与 Vault 生命周期。
 
@@ -23,7 +23,7 @@ M3 需要在 M2 的认证、host key 和双 lane 会话边界上增加 SFTP、�
 
 ## 决策
 
-Connector、SFTP 和 tunnel 作为 `firstshell-ssh` 的独立模块实现。Direct、SOCKS5、HTTP CONNECT 和系统静态代理共用端点校验、超时、取消与脱敏错误；代理凭据从 OS keyring 直接进入 Rust。系统代理在每次连接开始时解析并固化为 Direct、SOCKS5 或 HTTP CONNECT，不执行 PAC JavaScript。
+Connector、SFTP 和 tunnel 作为 `firstshell-ssh` 的独立模块实现。Direct、SOCKS5、HTTP CONNECT 和系统静态代理共用端点校验、超时、取消与脱敏错误；代理凭据由主题化专用密码框通过授权 IPC 写入 OS keyring，连接时直接从 keyring 进入 Rust。系统代理在每次连接开始时解析并固化为 Direct、SOCKS5 或 HTTP CONNECT，不执行 PAC JavaScript。
 
 跳板链由首跳 Connector 和后续 `direct-tcpip` channel 组成，最多四跳。每跳使用自己的认证、host/port 和 host-key 审批证据；配置代理或跳板时禁止 OpenSSH fallback，避免改变用户选择的路由或绕过逐跳信任。
 
@@ -37,6 +37,6 @@ SFTP 使用服务器 canonical root 建立 rooted workspace。所有远程路径
 
 ## 结果
 
-该方案保持 M2 的认证和信任边界，网络路由、SFTP 和隧道可在同一 SSH 实现中共享逐跳生命周期；WebView 不获得代理秘密或本地路径，Vault 锁定能够统一回收运行资源。代价是 M3 任务不能跨进程恢复，系统代理不支持 PAC JavaScript，覆盖既有远程文件也没有严格原子保证。
+该方案保持 M2 的认证和信任边界，网络路由、SFTP 和隧道可在同一 SSH 实现中共享逐跳生命周期；WebView 仅在专用密码框提交期间短暂持有代理秘密，且不获得本地路径，Vault 锁定能够统一回收运行资源。代价是 M3 任务不能跨进程恢复，系统代理不支持 PAC JavaScript，覆盖既有远程文件也没有严格原子保证。
 
 若后续需要 PAC、跨重启传输或服务器扩展级原子覆盖，必须分别补充网络脚本信任、加密任务持久化和协议能力协商设计，并更新本 ADR、数据模型与安全文档。

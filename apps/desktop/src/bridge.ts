@@ -75,9 +75,9 @@ export interface WorkspaceBridge {
   validateImport(fileName: string, password: string): Promise<ImportSummary>;
   restoreImport(fileName: string, password: string): Promise<RestoreReceipt>;
   onVaultLocked(callback: () => void): Promise<() => void>;
-  configureCredential(connectionId: string): Promise<boolean>;
+  configureCredential(connectionId: string, secret: string): Promise<void>;
   credentialStatus(connectionId: string): Promise<boolean>;
-  configureProxyCredential(proxyId: string): Promise<boolean>;
+  configureProxyCredential(proxyId: string, secret: string): Promise<void>;
   proxyCredentialStatus(proxyId: string): Promise<boolean>;
   openTerminal(connectionId: string, size: TerminalSize, onEvent: (value: DesktopSessionEvent) => void): Promise<SessionSnapshot>;
   openQuickTerminal(input: QuickConnectInput, size: TerminalSize, onEvent: (value: DesktopSessionEvent) => void): Promise<SessionSnapshot>;
@@ -92,7 +92,7 @@ export interface WorkspaceBridge {
   approveHostKey(sessionId: string, fingerprint: string, previousFingerprint: string | null): Promise<void>;
   startSessionLog(sessionId: string): Promise<SessionLogReceipt>;
   stopSessionLog(sessionId: string): Promise<void>;
-  openSftp(connectionId: string, root: string): Promise<SftpWorkspaceSnapshot>;
+  openSftp(connectionId: string): Promise<SftpWorkspaceSnapshot>;
   approveSftpHostKey(workspaceId: string, fingerprint: string, previousFingerprint: string | null): Promise<SftpWorkspaceSnapshot>;
   closeSftp(workspaceId: string): Promise<void>;
   listSftp(workspaceId: string, path: string): Promise<RemoteEntry[]>;
@@ -169,9 +169,9 @@ const tauriBridge: WorkspaceBridge = {
   restoreImport: (fileName, password) =>
     invoke("restore_workspace_import", { fileName, password }),
   onVaultLocked: async (callback) => listen("vault-locked", callback),
-  configureCredential: (connectionId) => invoke("configure_connection_credential", { connectionId }),
+  configureCredential: (connectionId, secret) => invoke("configure_connection_credential", { connectionId, secret }),
   credentialStatus: (connectionId) => invoke("connection_credential_status", { connectionId }),
-  configureProxyCredential: (proxyId) => invoke("configure_proxy_credential", { proxyId }),
+  configureProxyCredential: (proxyId, secret) => invoke("configure_proxy_credential", { proxyId, secret }),
   proxyCredentialStatus: (proxyId) => invoke("proxy_credential_status", { proxyId }),
   openTerminal: (connectionId, size, onEvent) => {
     const channel = new Channel<DesktopSessionEvent>();
@@ -195,7 +195,7 @@ const tauriBridge: WorkspaceBridge = {
     invoke("approve_host_key", { sessionId, fingerprint, previousFingerprint }),
   startSessionLog: (sessionId) => invoke("start_session_log", { sessionId }),
   stopSessionLog: (sessionId) => invoke("stop_session_log", { sessionId }),
-  openSftp: (connectionId, root) => invoke("open_sftp_workspace", { connectionId, root }),
+  openSftp: (connectionId) => invoke("open_sftp_workspace", { connectionId }),
   approveSftpHostKey: (workspaceId, fingerprint, previousFingerprint) => invoke("approve_sftp_host_key", { workspaceId, fingerprint, previousFingerprint }),
   closeSftp: (workspaceId) => invoke("close_sftp_workspace", { workspaceId }),
   listSftp: (workspaceId, path) => invoke("list_sftp_directory", { workspaceId, path }),
@@ -519,9 +519,9 @@ export function createPreviewBridge(): WorkspaceBridge {
       recoveryFileName: "before-import-preview.db",
     }),
     onVaultLocked: async () => () => undefined,
-    configureCredential: async () => true,
+    configureCredential: async () => undefined,
     credentialStatus: async () => true,
-    configureProxyCredential: async () => true,
+    configureProxyCredential: async () => undefined,
     proxyCredentialStatus: async () => true,
     openTerminal: async (_connectionId, size, onEvent) => {
       const value: SessionSnapshot = { id: nextId("session"), state: "ready", size };
@@ -559,8 +559,8 @@ export function createPreviewBridge(): WorkspaceBridge {
     approveHostKey: async () => undefined,
     startSessionLog: async (sessionId) => ({ path: `preview/session-logs/${sessionId}.log` }),
     stopSessionLog: async () => undefined,
-    openSftp: async (connectionId, root) => ({ id: nextId("sftp"), connectionId, root: !root || root === "." ? "/home/preview" : root, state: "ready", hostKey: null }),
-    approveSftpHostKey: async (workspaceId) => ({ id: workspaceId, connectionId: "connection-edge", root: "/home/preview", state: "ready", hostKey: null }),
+    openSftp: async (connectionId) => ({ id: nextId("sftp"), connectionId, root: "/", state: "ready", hostKey: null }),
+    approveSftpHostKey: async (workspaceId) => ({ id: workspaceId, connectionId: "connection-edge", root: "/", state: "ready", hostKey: null }),
     closeSftp: async () => undefined,
     listSftp: async (_workspaceId, path) => path ? [] : [
       { path: "logs", name: "logs", kind: "directory", size: null, modifiedAt: null, permissions: 0o755, linkTarget: null },

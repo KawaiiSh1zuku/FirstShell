@@ -279,6 +279,7 @@ export interface QuickConnectInput {
   privateKeyPath: string;
   allowLegacyAlgorithms: boolean;
   opensshFallback: boolean;
+  credential: string | null;
 }
 
 export type RemoteEntryKind = "file" | "directory" | "symlink" | "other";

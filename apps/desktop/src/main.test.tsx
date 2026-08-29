@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPreviewBridge } from "./bridge";
@@ -201,16 +201,37 @@ describe("M1 workspace accessibility and vault state", () => {
 
   it("restores a deleted tree item through the revision-checked undo action", async () => {
     const bridge = createPreviewBridge();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
 
-    await user.click(await screen.findByRole("treeitem", { name: /^Edge Gateway/ }));
-    await user.click(screen.getByRole("button", { name: "删除所选项目" }));
+    const connection = await screen.findByRole("treeitem", { name: /^Edge Gateway/ });
+    fireEvent.contextMenu(connection, { clientX: 100, clientY: 120 });
+    await user.click(screen.getByRole("menuitem", { name: "删除连接" }));
+    expect(screen.getByRole("alertdialog", { name: "删除连接" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "删除" }));
     const undo = await screen.findByRole("button", { name: "撤销删除 Edge Gateway" });
     expect(screen.queryByText("Edge Gateway")).toBeNull();
     await user.click(undo);
     expect(await screen.findByRole("treeitem", { name: /^Edge Gateway/ })).toBeTruthy();
+  });
+
+  it("edits a connection from its context menu and stores a private-key passphrase", async () => {
+    const bridge = createPreviewBridge();
+    const snapshot = await bridge.snapshot();
+    snapshot.connections[0] = { ...snapshot.connections[0], authentication: "private_key", privateKeyPath: "C:\\keys\\edge.pem" };
+    bridge.snapshot = async () => structuredClone(snapshot);
+    const configureCredential = vi.spyOn(bridge, "configureCredential");
+    const user = userEvent.setup();
+    render(<App bridge={bridge} />);
+
+    const connection = await screen.findByRole("treeitem", { name: /^Edge Gateway/ });
+    fireEvent.contextMenu(connection, { clientX: 100, clientY: 120 });
+    await user.click(screen.getByRole("menuitem", { name: "编辑连接" }));
+    expect(screen.getByRole("dialog", { name: "编辑连接" })).toBeTruthy();
+    expect((screen.getByLabelText("认证") as HTMLSelectElement).value).toBe("private_key");
+    await user.type(await screen.findByLabelText(/^私钥口令/), "test-passphrase");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(configureCredential).toHaveBeenCalledWith("connection-edge", "test-passphrase"));
   });
 
   it("switches among light, dark, and system themes with persistence", async () => {

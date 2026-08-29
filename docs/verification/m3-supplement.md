@@ -9,7 +9,7 @@
 
 M3 补充的实现、自动化测试、生产前端构建、静态检查、依赖扫描、文档和浏览器视觉基线均通过。持久化 SSH 连接进入 Ready 后自动建立独立的 companion SFTP；同连接的多个终端 pane 共享该 workspace，最后一个 pane 退出后关闭资源。SFTP 失败不改变终端状态，快速连接保持不自动建立 SFTP。
 
-文件工作区改为顶部单行地址/操作栏、左侧懒加载目录树和右侧文件表。地址跳转只接受当前 rooted workspace 内路径，前端先拒绝绝对根外路径和 `..`，Rust SFTP 边界继续执行最终规范化与越界拒绝。Vault 启动时先尝试设备 OS keyring，失败后才显示恢复口令表单，不把失败误报为 Vault 损坏。
+文件工作区使用顶部单行地址/操作栏、左侧懒加载目录树和右侧文件表。2026-08-25 起，桌面入口固定从远端系统 `/` 打开，不再以登录用户目录为客户端边界；地址栏接受 `/` 下绝对地址并拒绝 `..`，Rust SFTP 边界继续执行最终规范化与符号链接拒绝。文件、空白区、传输和隧道列表补充了复用现有命令的上下文菜单。Vault 启动时先尝试设备 OS keyring，失败后才显示恢复口令表单，不把失败误报为 Vault 损坏。
 
 终端配置支持 FirstShell、Solarized、Nord、Dracula、Gruvbox、One Dark、High Contrast 预设，以及包含前景、背景、光标、选区和 16 个 ANSI 色的自定义 palette。Rust 仅接受完整的 `#RRGGBB` 值；旧 terminal profile 通过默认字段继续读取，schema version 保持 2。
 
@@ -19,8 +19,9 @@ M3 补充的实现、自动化测试、生产前端构建、静态检查、依�
 | --- | --- | --- | --- |
 | S-001 | Companion 生命周期 | pane Ready 后自动创建、同连接多 pane 共享、最后一个 pane 断开后关闭 | 通过 |
 | S-002 | 故障隔离 | SFTP 建立失败不关闭或降级 SSH 终端；快速连接不自动启用 SFTP | 通过 |
-| S-003 | 路径导航 | 地址栏可跳转、目录树懒加载、`/etc` 和 `..` 根外跳转拒绝 | 通过 |
+| S-003 | 路径导航 | workspace 从系统 `/` 打开、地址栏可跳转、目录树懒加载、`..` 与符号链接穿越拒绝 | 通过（2026-08-25 行为更新） |
 | S-004 | 紧凑布局 | 33 px 工具栏、目录树与文件表并列、折叠 Operations 时保持 companion 挂载 | 通过 |
+| S-009 | 上下文菜单 | 文件表空白区提供刷新/上传/新建，文件和目录按类型提供已有操作；传输与隧道列表复用现有命令 | 通过（2026-08-25） |
 | S-005 | 启动解锁 | 启动优先尝试 OS keyring；失败后稳定回落到恢复口令表单 | 通过 |
 | S-006 | 终端主题 | 7 组主题系列、完整自定义 21 色 palette、实时预览并应用到 xterm | 通过 |
 | S-007 | 数据兼容 | 旧 profile 缺少 palette 时可读取；自定义主题缺色或非六位十六进制时拒绝 | 通过 |
@@ -46,7 +47,14 @@ git diff --check
 
 ## 视觉基线
 
-可复现脚本 `scripts/capture-m3-supplement-visuals.py` 使用无真实凭据的 preview bridge，并对关键指标执行断言。1440x900 视口下 `clientWidth=scrollWidth=1440`，地址栏为 `/home/preview`，目录树 2 项、文件表 3 行，SFTP 工具栏高度 33 px；浅色主题的当前根节点背景为 `rgb(220, 233, 224)`，不会回退为深色黑条；方形操作按钮与内部 SVG 的水平中心偏差为 0 px。390x844 视口下 `clientWidth=scrollWidth=390`；Operations 内部内容宽 560 px 并局部滚动，页面本身不产生横向溢出，目录树保持 190 px 可用宽度。主题编辑器完整展示 21 个颜色输入和实时预览。
+可复现脚本 `scripts/capture-m3-supplement-visuals.py` 使用无真实凭据的 preview bridge，并对关键指标执行断言。原始 2026-08-24 截图中的地址栏为 `/home/preview`；2026-08-25 行为更新已将脚本期望和 preview 根目录改为 `/`，现有图片仅作为旧布局证据，需在下次视觉验收时重拍。原验收的 1440x900 视口为 `clientWidth=scrollWidth=1440`，目录树 2 项、文件表 3 行，SFTP 工具栏高度 33 px；浅色主题的当前根节点背景为 `rgb(220, 233, 224)`，不会回退为深色黑条；方形操作按钮与内部 SVG 的水平中心偏差为 0 px。390x844 视口下 `clientWidth=scrollWidth=390`；Operations 内部内容宽 560 px 并局部滚动，页面本身不产生横向溢出，目录树保持 190 px 可用宽度。主题编辑器完整展示 21 个颜色输入和实时预览。
+
+## 2026-08-25 回归验证
+
+- Vitest：4 个文件、31 项通过；覆盖系统根地址跳转、文件/空白区上下文菜单和传输任务上下文菜单。
+- Rust：Clippy `-D warnings` 通过；workspace 74 项通过、2 项基准按设计忽略。
+- 前端生产构建、许可证检查（624 个 Cargo package、167 个 npm package）、Markdown 链接和 `git diff --check` 通过。
+- Tauri Release 与 NSIS 打包通过。真实远端 `/` 权限行为和更新后的视觉截图本轮未执行，不能视为已通过。
 
 桌面 SFTP：
 

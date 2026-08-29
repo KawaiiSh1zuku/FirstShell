@@ -21,7 +21,7 @@ def main() -> None:
         page.get_by_role("treeitem", name="Edge Gateway 10.24.8.11:22").click()
         page.get_by_role("textbox", name="远程地址").wait_for()
         page.wait_for_function(
-            "document.querySelector('[aria-label=\"远程地址\"]')?.value === '/home/preview'"
+            "document.querySelector('[aria-label=\"远程地址\"]')?.value === '/'"
         )
         page.screenshot(
             path=str(ASSET_DIRECTORY / "m3-supplement-sftp-desktop.png"),
@@ -52,7 +52,7 @@ def main() -> None:
         assert wide == {
             "clientWidth": 1440,
             "scrollWidth": 1440,
-            "address": "/home/preview",
+            "address": "/",
             "treeItems": 2,
             "fileRows": 3,
             "toolbarHeight": 33,

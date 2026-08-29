@@ -21,7 +21,7 @@ flowchart LR
     CORE --> RDP["Isolated RDP Helper: 有限信任"]
 ```
 
-WebView 永远不接收私钥、密码、仓库主密钥或同步口令。服务端默认被视为可能泄露、篡改或回放数据，客户端必须验证真实性和版本。
+WebView 永远不接收私钥文件内容、仓库主密钥或同步口令。SSH/代理密码与私钥口令仅在专用密码输入组件的局部状态中短暂停留，通过仅主窗口可调用的专用 IPC 提交后立即清空；不得进入全局状态、持久存储、日志或普通业务 DTO。服务端默认被视为可能泄露、篡改或回放数据，客户端必须验证真实性和版本。
 
 ## 本地密钥体系
 
@@ -54,7 +54,7 @@ SQLite 明文字段只保留数据库运行所需的稳定 ID、外键、版本�
 - 默认严格校验 host key。首次连接通过明确的 TOFU 对话展示算法和指纹。
 - 已知主机密钥变化时阻止连接，用户必须查看旧/新指纹并显式处理。
 - 优先现代 KEX、主机密钥、密码学和 MAC；弱算法只能按单主机临时启用并显示风险。
-- 密码、私钥口令和 keyboard-interactive 响应只在 Rust 侧短期存在。
+- 密码、私钥口令和 keyboard-interactive 响应只在专用输入组件与 Rust 认证链路中短期存在；持久连接仅把秘密写入 OS keyring。
 - SSH agent 转发、远程端口转发和动态代理默认关闭。
 - 跳板链逐跳执行 host key 校验，并限制深度、循环、超时和目标范围。
 - OpenSSH 回退不得把秘密写入命令行、环境变量、临时明文文件或日志。
@@ -62,7 +62,7 @@ SQLite 明文字段只保留数据库运行所需的稳定 ID、外键、版本�
 
 M2 的默认 `russh` 路径从算法列表移除 SHA-1 `ssh-rsa`，旧 KEX/cipher/MAC 只能随单主机配置追加且保持最低优先级。首次连接写入应用自有 OpenSSH 格式 known_hosts 前必须展示 SHA-256 指纹；密钥变化始终 fail-closed。OpenSSH 回退仅处理连接类失败，不能绕过认证或 host key 错误，桌面入口当前只允许 agent 模式并使用固定参数构建。
 
-密码、keyboard-interactive 响应和私钥口令由原生 Rust 对话框取得，最大 4096 字节；WebView 只查询凭据是否已配置。keyring 状态检查读取到的明文会立即清零，认证枚举的 `Debug` 输出固定脱敏。keyboard-interactive 最多响应 8 轮且拒绝要求回显的提示。Windows 优先连接 OpenSSH agent named pipe，再探测 Pageant；没有可用 agent 或身份全部被拒绝时返回稳定脱敏错误，SSH agent forwarding 仍默认关闭。
+密码、keyboard-interactive 响应、私钥口令和代理密码由应用主题密码框取得，限制为 4096 字节；组件只使用局部状态，提交时先清空输入，再通过仅主窗口可调用的专用命令交给 Rust。持久连接的密码和私钥口令使用不同 service/account 命名空间写入 OS keyring；快速连接只把秘密用于当前一次连接。Rust 接收后立即包装为可清零值，keyring 状态检查读取到的明文也立即清零，认证枚举的 `Debug` 输出固定脱敏。keyboard-interactive 最多响应 8 轮且拒绝要求回显的提示。Windows 优先连接 OpenSSH agent named pipe，再探测 Pageant；没有可用 agent 或身份全部被拒绝时返回稳定脱敏错误，SSH agent forwarding 仍默认关闭。
 
 M3 的 SOCKS5/HTTP CONNECT 代理密码采用独立 keyring 项，协议错误只返回稳定认证/连接状态，不回显认证头。系统代理只在连接开始时解析静态配置，防止运行中漂移；PAC JavaScript 未引入当前信任边界。跳板链最多四跳，应用层拒绝直接、重复和传递循环，每跳 host/port/指纹绑定审批证据。配置代理或跳板时禁止 OpenSSH 回退，避免绕过所选路由或逐跳信任策略。
 
@@ -82,9 +82,9 @@ M3 的 SOCKS5/HTTP CONNECT 代理密码采用独立 keyring 项，协议错误�
 
 ## 文件与命令安全
 
-本地和远程路径都按目标平台语义规范化，拒绝越过用户选择根目录的路径。M3 不隐式跟随远程符号链接；链接本身可列出和删除，进入链接路径或对链接 chmod 会失败关闭。上传和下载使用同目录临时文件、长度限制、可选 SHA-256 和替换策略；暂停按 `pausing -> paused` 收敛并保留安全 partial，恢复进入 `queued/running`，取消则使用独立的 `cancelling -> cancelled`；续传前重新核对长度，上传还检查本地源在传输期间是否变化。服务器没有 `posix-rename` 扩展时，覆盖既有远程文件存在 remove 后 rename 的极短窗口，不能文档化为严格原子覆盖。
+本地路径按目标平台语义规范化；远程 workspace 固定以系统 `/` 为根，API 继续拒绝绝对路径、`..` 和控制字符。M3 不隐式跟随远程符号链接；链接本身可列出和删除，进入链接路径或对链接 chmod 会失败关闭。系统根可见性不提升账户权限，所有操作仍受远端 SSH/SFTP 服务端授权。上传和下载使用同目录临时文件、长度限制、可选 SHA-256 和替换策略；暂停按 `pausing -> paused` 收敛并保留安全 partial，恢复进入 `queued/running`，取消则使用独立的 `cancelling -> cancelled`；续传前重新核对长度，上传还检查本地源在传输期间是否变化。服务器没有 `posix-rename` 扩展时，覆盖既有远程文件存在 remove 后 rename 的极短窗口，不能文档化为严格原子覆盖。
 
-companion SFTP 只在持久化 SSH connection 的终端 ready 后触发，失败不改变终端状态。同连接多 pane 共享一个 SFTP workspace；用户关闭、最后一个 pane 退出、Vault 锁定或应用退出都会回收。可输入地址栏先拒绝 canonical root 外绝对地址和 `..`，Rust `SftpWorkspace` 仍执行最终 rooted path 与 symlink 检查。
+companion SFTP 只在持久化 SSH connection 的终端 ready 后触发，失败不改变终端状态。同连接多 pane 共享一个以 `/` 为 canonical root 的 SFTP workspace；用户关闭、最后一个 pane 退出、Vault 锁定或应用退出都会回收。可输入地址栏接受 `/` 下绝对地址并转换为相对表示，拒绝 `..`；Rust `SftpWorkspace` 仍执行最终规范化与 symlink 检查。
 
 M4 监控只接受固定 host/process/port/ping/traceroute 模板。ping/traceroute target 拒绝 shell 元字符、空白和 `-` 起始的 option smuggling；探针限时 8 秒、输出 512 KiB，并在 Rust 侧清除控制字符、限制行列后才形成 DTO。持久 SSH 终端 Ready 后自动启动详情监控，快速连接不参与；终端断开、Vault 锁定或应用退出会取消对应任务。每个周期监控使用独立低优先级 SSH 连接、最多 16 个、300 点环形缓冲；监控返回内容不会再次拼入 shell，也不进入数据库。
 

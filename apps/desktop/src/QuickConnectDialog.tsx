@@ -26,6 +26,7 @@ export function QuickConnectDialog({ busy, error, onClose, onConnect }: {
       privateKeyPath: authentication === "private_key" ? privateKeyPath.trim() : "",
       allowLegacyAlgorithms,
       opensshFallback: authentication === "agent" && opensshFallback,
+      credential: null,
     });
   };
 

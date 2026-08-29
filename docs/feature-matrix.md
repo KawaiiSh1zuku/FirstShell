@@ -22,7 +22,7 @@ M1 基础工作区、M2 SSH 终端、M3 SFTP/复杂网络和 M4 主机监控/效
 
 | 能力 | 目标 | 状态 | 验收重点 |
 | --- | --- | --- | --- |
-| 连接配置 CRUD | M1 | Verified | SSH/RDP/本地类型清晰，修改事务化 |
+| 连接配置 CRUD | M1/M4 补充 | Verified | SSH/RDP/本地类型清晰，详情按钮与连接树右键菜单复用 revision-safe 编辑/删除/撤销 |
 | 文件夹、排序、标签与搜索 | M1 | Verified | 密文名称可在解锁态搜索，树操作可撤销 |
 | 本地加密仓库 | M1 | Verified | OS keyring、自动锁定、损坏恢复 |
 | 多工作区布局持久化 | M1/M4 补充 | Verified | 左侧连接栏可收起并加密保存，旧布局默认展开，不泄露锁定数据 |
@@ -33,7 +33,7 @@ M1 基础工作区、M2 SSH 终端、M3 SFTP/复杂网络和 M4 主机监控/效
 
 | 能力 | 目标 | 状态 | 验收重点 |
 | --- | --- | --- | --- |
-| 密码、公钥、keyboard-interactive | M2 | Verified | 秘密不进入 WebView、argv 或日志 |
+| 密码、公钥、keyboard-interactive | M2 | Verified | 主题化密码框；秘密不进入前端持久状态、argv 或日志，持久凭据进入 OS keyring |
 | SSH agent | M2 | Verified | 平台能力探测、转发默认关闭 |
 | known_hosts 与首次信任 | M2 | Verified | 密钥变化 fail-closed |
 | 多标签与多分屏终端 | M2 | Verified | 布局稳定、键盘焦点正确、会话独立 |
@@ -49,11 +49,11 @@ M1 基础工作区、M2 SSH 终端、M3 SFTP/复杂网络和 M4 主机监控/效
 | 能力 | 目标 | 状态 | 验收重点 |
 | --- | --- | --- | --- |
 | 同工作区 SFTP 文件管理器 | M3 | Verified | 终端 ready 自动 companion、同连接多 pane 共享、故障隔离且不争抢交互带宽 |
-| SFTP 目录树与地址跳转 | M3 补充 | Verified | 单行紧凑工具栏、懒加载目录树、root 内地址直达、双层路径拒绝 |
+| SFTP 目录树与地址跳转 | M3 补充 | Verified | 远端系统 `/` 起始、懒加载目录树、地址直达、`..` 与符号链接穿越拒绝 |
 | 上传、下载、暂停、取消、重试 | M3 | Verified | 有界队列、临时文件、失败可恢复 |
 | 覆盖、续传与冲突策略 | M3 | Verified | 远端变化检测；新目标同目录 rename，既有目标记录替换窗口 |
 | 拖放与多文件队列 | M3 | Verified | 路径规范化、批量错误清晰 |
-| 权限、重命名、删除与新建 | M3 | Verified | 危险操作确认、符号链接策略 |
+| 权限、重命名、删除与新建 | M3 | Verified | 工具栏与上下文菜单复用同一动作、危险操作确认、符号链接策略 |
 | 在线远程编辑 | M4 | Verified | 2 MiB UTF-8、双重版本指纹、保存冲突和 symlink 拒绝 |
 | 压缩打包传输 | M4 | Verified | rooted source、固定 tar 模板、shell quoting 与超时上限 |
 | ZMODEM | M4 | Verified | `zmodem2` 状态机、受控队列与内存往返通过；真实 lrzsz 互操作延期 M7 |
@@ -67,8 +67,6 @@ M1 基础工作区、M2 SSH 终端、M3 SFTP/复杂网络和 M4 主机监控/效
 | 能力 | 目标 | 状态 | 验收重点 |
 | --- | --- | --- | --- |
 | CPU、内存、SWAP、负载、磁盘、网络监控 | M4 | Verified | SSH Ready 后自动启动并显示在详情页，可切换网卡；agentless 独立连接、8 秒超时、300 点环形缓冲 |
-| 进程与监听端口视图 | M4 | Verified | 512 KiB 输出上限、版本化行表、权限不足可诊断 |
-| Ping 与 traceroute | M4 | Verified | 固定模板、target 注入拒绝、取消和目标速率上限 |
 | 代码片段分组、标签与搜索 | M4 | Verified | Vault 加密记录、标签搜索与 revision 冲突 |
 | 参数化代码片段 | M4 | Verified | 五类变量、placeholder 严格匹配、默认只插入不执行 |
 | 路径历史与自动补全 | M4 | Verified | 按连接隔离、500 项有界、可清除 |

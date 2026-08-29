@@ -31,88 +31,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::commands::DesktopState;
 
-#[cfg(windows)]
-#[allow(unsafe_code)]
-mod windows_credential_dialog {
-    use std::ffi::c_void;
-
-    use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
-    use windows::Win32::Graphics::Gdi::HBITMAP;
-    use windows::Win32::Security::Credentials::{
-        CREDUI_FLAGS_ALWAYS_SHOW_UI, CREDUI_FLAGS_DO_NOT_PERSIST,
-        CREDUI_FLAGS_EXCLUDE_CERTIFICATES, CREDUI_FLAGS_GENERIC_CREDENTIALS,
-        CREDUI_FLAGS_KEEP_USERNAME, CREDUI_FLAGS_PASSWORD_ONLY_OK, CREDUI_INFOW,
-        CredUIPromptForCredentialsW,
-    };
-    use windows::core::PCWSTR;
-    use zeroize::Zeroize;
-
-    const PASSWORD_BUFFER_CHARS: usize = MAX_SSH_SECRET_BYTES + 1;
-
-    pub(super) fn password_box(
-        parent: isize,
-        title: &str,
-        message: &str,
-        target: &str,
-        username: &str,
-    ) -> Result<Option<String>, u32> {
-        let title = wide_z(title);
-        let message = wide_z(message);
-        let target = wide_z(target);
-        let mut username = wide_z(username);
-        username.resize(username.len().max(513), 0);
-        let mut password = vec![0_u16; PASSWORD_BUFFER_CHARS];
-        let info = CREDUI_INFOW {
-            cbSize: u32::try_from(std::mem::size_of::<CREDUI_INFOW>()).unwrap_or(u32::MAX),
-            hwndParent: HWND(parent as *mut c_void),
-            pszMessageText: PCWSTR(message.as_ptr()),
-            pszCaptionText: PCWSTR(title.as_ptr()),
-            hbmBanner: HBITMAP::default(),
-        };
-        let flags = CREDUI_FLAGS_ALWAYS_SHOW_UI
-            | CREDUI_FLAGS_DO_NOT_PERSIST
-            | CREDUI_FLAGS_EXCLUDE_CERTIFICATES
-            | CREDUI_FLAGS_GENERIC_CREDENTIALS
-            | CREDUI_FLAGS_KEEP_USERNAME
-            | CREDUI_FLAGS_PASSWORD_ONLY_OK;
-        let status = unsafe {
-            CredUIPromptForCredentialsW(
-                Some(&raw const info),
-                PCWSTR(target.as_ptr()),
-                None,
-                0,
-                &mut username,
-                &mut password,
-                None,
-                flags,
-            )
-        };
-        username.zeroize();
-        if status == ERROR_CANCELLED {
-            password.zeroize();
-            return Ok(None);
-        }
-        if !status.is_ok() {
-            password.zeroize();
-            return Err(status.0);
-        }
-        let length = password
-            .iter()
-            .position(|value| *value == 0)
-            .unwrap_or(password.len());
-        let secret = String::from_utf16_lossy(&password[..length]);
-        password.zeroize();
-        Ok(Some(secret))
-    }
-
-    fn wide_z(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(std::iter::once(0)).collect()
-    }
-
-    use super::MAX_SSH_SECRET_BYTES;
-}
-
 const CREDENTIAL_SERVICE: &str = "FirstShell SSH";
+const PRIVATE_KEY_CREDENTIAL_SERVICE: &str = "FirstShell SSH Private Key";
 const PROXY_CREDENTIAL_SERVICE: &str = "FirstShell Proxy";
 const LOG_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const MAX_SSH_SECRET_BYTES: usize = 4096;
@@ -197,8 +117,8 @@ pub struct SessionLogReceipt {
     path: String,
 }
 
-/// Non-persistent quick-connect request. It cannot contain credential bytes.
-#[derive(Debug, Clone, Deserialize)]
+/// Non-persistent quick-connect request. Its optional credential is consumed once.
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuickConnectInput {
     host: String,
@@ -208,6 +128,7 @@ pub struct QuickConnectInput {
     private_key_path: String,
     allow_legacy_algorithms: bool,
     openssh_fallback: bool,
+    credential: Option<String>,
 }
 
 fn authorize(window: &WebviewWindow) -> Result<(), PublicError> {
@@ -226,13 +147,16 @@ pub async fn configure_connection_credential(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
     connection_id: ConnectionId,
-) -> Result<bool, PublicError> {
+    secret: String,
+) -> Result<(), PublicError> {
     authorize(&window)?;
     let connection = find_connection(&state, connection_id).await?;
     if connection.kind != ConnectionKind::Ssh
         || !matches!(
             connection.authentication,
-            SshAuthenticationKind::Password | SshAuthenticationKind::KeyboardInteractive
+            SshAuthenticationKind::Password
+                | SshAuthenticationKind::KeyboardInteractive
+                | SshAuthenticationKind::PrivateKey
         )
     {
         return Err(public(
@@ -240,27 +164,11 @@ pub async fn configure_connection_credential(
             "connection does not use a stored SSH secret",
         ));
     }
-    let account = credential_account(connection_id);
-    let title = format!("连接 {}", connection.name);
-    let message = format!(
-        "请输入 {}@{}:{} 的 SSH 密码。密码将直接写入系统凭据库，不会进入 FirstShell WebView。",
-        connection.username, connection.host, connection.port
-    );
-    let target = format!("FirstShell SSH · {}:{}", connection.host, connection.port);
-    let Some(secret) =
-        prompt_native_password(&window, title, message, target, connection.username).await?
-    else {
-        return Ok(false);
-    };
+    let service = credential_service(connection.authentication);
+    let account = credential_account(connection_id, connection.authentication);
     tokio::task::spawn_blocking(move || {
         let secret = validated_native_secret(secret)?;
-        if secret.is_empty() || secret.len() > 4096 {
-            return Err(public(
-                ErrorCode::InvalidInput,
-                "SSH secret length is invalid",
-            ));
-        }
-        keyring::Entry::new(CREDENTIAL_SERVICE, &account)
+        keyring::Entry::new(service, &account)
             .and_then(|entry| entry.set_password(secret.as_str()))
             .map_err(|_| {
                 public(
@@ -268,21 +176,34 @@ pub async fn configure_connection_credential(
                     "OS credential store rejected the SSH secret",
                 )
             })?;
-        Ok(true)
+        Ok(())
     })
     .await
-    .map_err(|_| public(ErrorCode::Internal, "native credential prompt stopped"))?
+    .map_err(|_| public(ErrorCode::Internal, "credential storage stopped"))?
 }
 
 #[tauri::command]
 pub async fn connection_credential_status(
     window: WebviewWindow,
+    state: State<'_, DesktopState>,
     connection_id: ConnectionId,
 ) -> Result<bool, PublicError> {
     authorize(&window)?;
-    let account = credential_account(connection_id);
+    let connection = find_connection(&state, connection_id).await?;
+    if connection.kind != ConnectionKind::Ssh
+        || !matches!(
+            connection.authentication,
+            SshAuthenticationKind::Password
+                | SshAuthenticationKind::KeyboardInteractive
+                | SshAuthenticationKind::PrivateKey
+        )
+    {
+        return Ok(false);
+    }
+    let service = credential_service(connection.authentication);
+    let account = credential_account(connection_id, connection.authentication);
     tokio::task::spawn_blocking(move || {
-        Ok(keyring::Entry::new(CREDENTIAL_SERVICE, &account)
+        Ok(keyring::Entry::new(service, &account)
             .and_then(|entry| entry.get_password())
             .map(|mut secret| {
                 secret.zeroize();
@@ -299,7 +220,8 @@ pub async fn configure_proxy_credential(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
     proxy_id: ProxyId,
-) -> Result<bool, PublicError> {
+    secret: String,
+) -> Result<(), PublicError> {
     authorize(&window)?;
     let proxy = find_proxy(&state, proxy_id).await?;
     if !matches!(proxy.kind, ProxyKind::Socks5 | ProxyKind::HttpConnect)
@@ -311,31 +233,15 @@ pub async fn configure_proxy_credential(
         ));
     }
     let account = proxy_credential_account(proxy_id);
-    let title = format!("代理凭据 · {}", proxy.name);
-    let message = format!(
-        "请输入 {}@{}:{} 的代理密码。密码将直接写入系统凭据库，不会进入 FirstShell WebView。",
-        proxy.username, proxy.host, proxy.port
-    );
-    let target = format!("FirstShell Proxy · {}:{}", proxy.host, proxy.port);
-    let Some(secret) =
-        prompt_native_password(&window, title, message, target, proxy.username).await?
-    else {
-        return Ok(false);
-    };
     tokio::task::spawn_blocking(move || {
         let secret = validated_native_secret(secret)?;
         keyring::Entry::new(PROXY_CREDENTIAL_SERVICE, &account)
             .and_then(|entry| entry.set_password(&secret))
             .map_err(|_| public(ErrorCode::Internal, "proxy credential store is unavailable"))?;
-        Ok(true)
+        Ok(())
     })
     .await
-    .map_err(|_| {
-        public(
-            ErrorCode::Internal,
-            "native proxy credential prompt stopped",
-        )
-    })?
+    .map_err(|_| public(ErrorCode::Internal, "proxy credential storage stopped"))?
 }
 
 #[tauri::command]
@@ -423,13 +329,18 @@ pub async fn open_terminal_session(
 pub async fn open_quick_terminal(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
-    input: QuickConnectInput,
+    mut input: QuickConnectInput,
     size: TerminalSize,
     on_event: Channel<DesktopSessionEvent>,
 ) -> Result<SessionSnapshot, PublicError> {
     authorize(&window)?;
     validate_quick_input(&input)?;
-    let authentication = resolve_quick_authentication(&window, &input).await?;
+    let credential = input
+        .credential
+        .take()
+        .map(validated_native_secret)
+        .transpose()?;
+    let authentication = resolve_quick_authentication(&input, credential).await?;
     let sink = desktop_session_sink(Arc::clone(&state.sessions.log_senders), on_event);
     let primary = Arc::new(SshSessionFactory::new(SshConnectSpec {
         host: input.host.clone(),
@@ -837,7 +748,7 @@ async fn resolve_proxy_route(
                 .map_err(|_| {
                     public(
                         ErrorCode::InvalidState,
-                        "configure the native proxy credential before connecting",
+                        "configure the proxy credential before connecting",
                     )
                 })?;
                 Some(validated_native_secret(secret)?)
@@ -895,7 +806,7 @@ async fn resolve_authentication(
     match connection.authentication {
         SshAuthenticationKind::Agent => Ok(SshAuthentication::Agent),
         SshAuthenticationKind::Password | SshAuthenticationKind::KeyboardInteractive => {
-            let account = credential_account(connection.id);
+            let account = credential_account(connection.id, connection.authentication);
             let secret = tokio::task::spawn_blocking(move || {
                 keyring::Entry::new(CREDENTIAL_SERVICE, &account)
                     .and_then(|entry| entry.get_password())
@@ -905,7 +816,7 @@ async fn resolve_authentication(
             .map_err(|_| {
                 public(
                     ErrorCode::InvalidState,
-                    "configure the native SSH credential before connecting",
+                    "configure the SSH credential before connecting",
                 )
             })?;
             let secret = validated_native_secret(secret)?;
@@ -929,18 +840,20 @@ async fn resolve_authentication(
                         )
                     })?;
             let passphrase = if encrypted {
-                Some(
-                    tokio::task::spawn_blocking(|| {
-                        tinyfiledialogs::password_box(
-                            "FirstShell private key",
-                            "Enter the private-key passphrase. It stays in the Rust process and is not stored.",
-                        )
-                    })
-                    .await
-                    .map_err(|_| public(ErrorCode::Internal, "native passphrase prompt stopped"))?
-                    .ok_or_else(|| public(ErrorCode::InvalidState, "private-key prompt was cancelled"))
-                    .and_then(validated_native_secret)?,
-                )
+                let account = credential_account(connection.id, connection.authentication);
+                let secret = tokio::task::spawn_blocking(move || {
+                    keyring::Entry::new(PRIVATE_KEY_CREDENTIAL_SERVICE, &account)
+                        .and_then(|entry| entry.get_password())
+                })
+                .await
+                .map_err(|_| public(ErrorCode::Internal, "credential lookup stopped"))?
+                .map_err(|_| {
+                    public(
+                        ErrorCode::InvalidState,
+                        "configure the SSH credential before connecting",
+                    )
+                })?;
+                Some(validated_native_secret(secret)?)
             } else {
                 None
             };
@@ -950,25 +863,18 @@ async fn resolve_authentication(
 }
 
 async fn resolve_quick_authentication(
-    window: &WebviewWindow,
     input: &QuickConnectInput,
+    credential: Option<Zeroizing<String>>,
 ) -> Result<SshAuthentication, PublicError> {
     match input.authentication {
         SshAuthenticationKind::Agent => Ok(SshAuthentication::Agent),
         SshAuthenticationKind::Password | SshAuthenticationKind::KeyboardInteractive => {
-            let title = format!("快速连接 {}", input.host);
-            let message = format!(
-                "请输入 {}@{}:{} 的一次性 SSH 密码。密码仅在本次连接期间保留于 Rust 进程。",
-                input.username, input.host, input.port
-            );
-            let target = format!("FirstShell Quick Connect · {}:{}", input.host, input.port);
-            let secret =
-                prompt_native_password(window, title, message, target, input.username.clone())
-                    .await?
-                    .ok_or_else(|| {
-                        public(ErrorCode::InvalidState, "credential prompt was cancelled")
-                    })?;
-            let secret = validated_native_secret(secret)?;
+            let secret = credential.ok_or_else(|| {
+                public(
+                    ErrorCode::InvalidState,
+                    "provide the temporary SSH credential before connecting",
+                )
+            })?;
             if input.authentication == SshAuthenticationKind::Password {
                 Ok(SshAuthentication::Password(secret))
             } else {
@@ -989,64 +895,17 @@ async fn resolve_quick_authentication(
                         )
                     })?;
             let passphrase = if encrypted {
-                Some(
-                    tokio::task::spawn_blocking(|| {
-                        tinyfiledialogs::password_box(
-                            "FirstShell private key",
-                            "Enter the one-time private-key passphrase. It is not stored.",
-                        )
-                    })
-                    .await
-                    .map_err(|_| public(ErrorCode::Internal, "native passphrase prompt stopped"))?
-                    .ok_or_else(|| {
-                        public(ErrorCode::InvalidState, "private-key prompt was cancelled")
-                    })
-                    .and_then(validated_native_secret)?,
-                )
+                Some(credential.ok_or_else(|| {
+                    public(
+                        ErrorCode::InvalidState,
+                        "provide the temporary SSH credential before connecting",
+                    )
+                })?)
             } else {
                 None
             };
             Ok(SshAuthentication::PrivateKey { path, passphrase })
         }
-    }
-}
-
-async fn prompt_native_password(
-    window: &WebviewWindow,
-    title: String,
-    message: String,
-    target: String,
-    username: String,
-) -> Result<Option<String>, PublicError> {
-    #[cfg(windows)]
-    {
-        let parent = window
-            .hwnd()
-            .map_err(|_| {
-                public(
-                    ErrorCode::Internal,
-                    "native credential window is unavailable",
-                )
-            })?
-            .0 as isize;
-        tokio::task::spawn_blocking(move || {
-            windows_credential_dialog::password_box(parent, &title, &message, &target, &username)
-        })
-        .await
-        .map_err(|_| public(ErrorCode::Internal, "native credential prompt stopped"))?
-        .map_err(|_| {
-            public(
-                ErrorCode::Internal,
-                "native credential prompt is unavailable",
-            )
-        })
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (window, target, username);
-        tokio::task::spawn_blocking(move || tinyfiledialogs::password_box(&title, &message))
-            .await
-            .map_err(|_| public(ErrorCode::Internal, "native credential prompt stopped"))
     }
 }
 
@@ -1066,6 +925,10 @@ fn validate_quick_input(input: &QuickConnectInput) -> Result<(), PublicError> {
             .chars()
             .any(|character| character.is_whitespace() || character.is_control())
         || input.private_key_path.len() > 4096
+        || input
+            .credential
+            .as_ref()
+            .is_some_and(|secret| secret.is_empty() || secret.len() > MAX_SSH_SECRET_BYTES)
     {
         return Err(public(
             ErrorCode::InvalidInput,
@@ -1100,8 +963,20 @@ fn validated_native_secret(secret: String) -> Result<Zeroizing<String>, PublicEr
     Ok(secret)
 }
 
-fn credential_account(id: ConnectionId) -> String {
-    format!("ssh:{id}")
+const fn credential_service(authentication: SshAuthenticationKind) -> &'static str {
+    if matches!(authentication, SshAuthenticationKind::PrivateKey) {
+        PRIVATE_KEY_CREDENTIAL_SERVICE
+    } else {
+        CREDENTIAL_SERVICE
+    }
+}
+
+fn credential_account(id: ConnectionId, authentication: SshAuthenticationKind) -> String {
+    if matches!(authentication, SshAuthenticationKind::PrivateKey) {
+        format!("private-key:{id}")
+    } else {
+        format!("ssh:{id}")
+    }
 }
 
 fn proxy_credential_account(id: ProxyId) -> String {
@@ -1181,7 +1056,12 @@ mod tests {
     #[test]
     fn credential_accounts_should_be_scoped_by_connection() {
         assert_eq!(CREDENTIAL_SERVICE, "FirstShell SSH");
-        assert!(credential_account(ConnectionId::new()).starts_with("ssh:"));
+        assert_eq!(PRIVATE_KEY_CREDENTIAL_SERVICE, "FirstShell SSH Private Key");
+        let id = ConnectionId::new();
+        assert!(credential_account(id, SshAuthenticationKind::Password).starts_with("ssh:"));
+        assert!(
+            credential_account(id, SshAuthenticationKind::PrivateKey).starts_with("private-key:")
+        );
     }
 
     #[test]
@@ -1194,6 +1074,7 @@ mod tests {
             private_key_path: String::new(),
             allow_legacy_algorithms: false,
             openssh_fallback: true,
+            credential: None,
         };
         assert!(validate_quick_input(&input).is_ok());
 
@@ -1202,10 +1083,15 @@ mod tests {
         input.username = "operator".to_owned();
         input.authentication = SshAuthenticationKind::Password;
         assert!(validate_quick_input(&input).is_err());
+        input.openssh_fallback = false;
+        input.credential = Some("one-time secret".to_owned());
+        assert!(validate_quick_input(&input).is_ok());
+        input.credential = Some("x".repeat(MAX_SSH_SECRET_BYTES + 1));
+        assert!(validate_quick_input(&input).is_err());
     }
 
     #[test]
-    fn native_ssh_secrets_should_be_bounded() {
+    fn ssh_secrets_should_be_bounded() {
         assert!(validated_native_secret("secret".to_owned()).is_ok());
         assert!(validated_native_secret(String::new()).is_err());
         assert!(validated_native_secret("x".repeat(MAX_SSH_SECRET_BYTES + 1)).is_err());

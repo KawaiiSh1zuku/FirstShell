@@ -25,7 +25,7 @@ M3 首次验收后的实用性复核发现，SFTP 需要用户再次选择连接
 
 companion 只保存不透明 workspace ID 和公开快照。凭据、host-key 校验、远端路径检查和资源回收仍在 Rust；自动 SFTP 失败只进入 Operations 错误状态，不改变终端状态。Operations 即使视觉折叠仍保持挂载以维护 companion 生命周期，但使用 `hidden` 移除布局和可聚焦控件。
 
-SFTP UI 使用单行导航/操作栏、可提交地址栏、左侧懒加载目录树和右侧文件表。地址栏只将 canonical root 内地址转换为相对路径，`..` 或根外绝对地址在前端拒绝，Rust rooted workspace 继续作为最终安全边界。默认底部面板高度由 180 调整为 260 logical px，旧的加密布局值继续按用户设置读取。
+SFTP UI 使用单行导航/操作栏、可提交地址栏、左侧懒加载目录树、右侧文件表和统一上下文菜单。桌面 IPC 不接受可配置 root，Rust 固定将 `/` 规范化为 workspace root；地址栏接受系统根下绝对地址并转换为相对路径，`..` 在前端拒绝，Rust workspace 继续执行最终路径与符号链接检查。默认底部面板高度由 180 调整为 260 logical px，旧的加密布局值继续按用户设置读取。
 
 应用冷启动读取到 initialized 且 locked 的 Vault 时自动调用既有 OS keyring 解锁。成功前保持 loading UI，失败后展示脱敏错误并直接选择恢复口令表单。恢复口令仍需用户输入，不持久化、不自动填充，也不创建新的“恢复密钥”存储旁路。
 

@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import { BackupDialog } from "./BackupDialog";
 import { workspaceBridge, type WorkspaceBridge } from "./bridge";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { ContextMenu } from "./ContextMenu";
 import { EntityDialog } from "./EntityDialog";
 import { HostMonitorPanel, useAutomaticHostMonitors, type AutoMonitorView } from "./HostMonitorPanel";
 import { SettingsDialog } from "./SettingsDialog";
@@ -75,6 +77,16 @@ interface UndoDelete {
   id: string;
   expectedRevision: number;
   label: string;
+}
+
+type DeleteTarget =
+  | { kind: "folder"; value: Folder }
+  | { kind: "connection"; value: ConnectionProfile };
+
+interface ConnectionMenuState {
+  connection: ConnectionProfile;
+  x: number;
+  y: number;
 }
 
 interface AppState {
@@ -177,6 +189,8 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
   const [rightMode, setRightMode] = useState<"details" | "tools">("details");
   const [toolsMounted, setToolsMounted] = useState(false);
   const [insertRequest, setInsertRequest] = useState<TerminalInsertRequest | null>(null);
+  const [connectionMenu, setConnectionMenu] = useState<ConnectionMenuState | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
   const insertSequenceRef = useRef(0);
   const addActivity = useCallback((message: string) => dispatch({ type: "activity", message }), []);
   const monitoredConnectionIds = useMemo(
@@ -189,7 +203,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
     setRightMode("tools");
   }, []);
   const configureProxyCredential = useCallback(
-    (value: ProxyProfile) => bridge.configureProxyCredential(value.id),
+    (value: ProxyProfile, secret: string) => bridge.configureProxyCredential(value.id, secret),
     [bridge],
   );
   const proxyCredentialStatus = useCallback(
@@ -294,18 +308,28 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
     } catch {}
   };
 
-  const saveConnection = async (input: ConnectionInput, existing?: ConnectionProfile) => {
+  const saveConnection = async (input: ConnectionInput, existing?: ConnectionProfile, credential?: string) => {
+    let value: ConnectionProfile | undefined;
     try {
-      const value = await perform(
+      value = await perform(
         () => existing
           ? bridge.updateConnection(existing.id, existing.revision, input)
           : bridge.createConnection(input),
         existing ? "连接已更新" : "连接已创建",
       );
       await refresh();
+      if (credential && value) {
+        const connectionId = value.id;
+        await perform(() => bridge.configureCredential(connectionId, credential), "SSH 凭据已保存");
+      }
       openConnection(value.id);
       dispatch({ type: "patch", value: { entityDialog: null } });
-    } catch {}
+    } catch {
+      if (value) {
+        await refresh().catch(() => undefined);
+        dispatch({ type: "patch", value: { entityDialog: { kind: "connection", value } } });
+      }
+    }
   };
 
   const openConnection = (id: string) => {
@@ -442,19 +466,37 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
     dispatch({ type: "patch", value: { quickConnections: [...state.quickConnections, connection], openTabs: [...state.openTabs, id], activeTab: id, quickConnectOpen: false, error: null } });
   };
 
-  const deleteSelected = async () => {
-    const label = selectedFolder?.name ?? selectedConnection?.name;
-    if (!label || !window.confirm(`删除“${label}”？`)) return;
+  const requestDeleteSelected = () => {
+    if (selectedFolder) setPendingDelete({ kind: "folder", value: selectedFolder });
+    if (selectedConnection) setPendingDelete({ kind: "connection", value: selectedConnection });
+  };
+
+  const deleteEntity = async (target: DeleteTarget) => {
+    const label = target.value.name;
     try {
-      const undoDelete: UndoDelete = selectedFolder
-        ? { kind: "folder", id: selectedFolder.id, expectedRevision: selectedFolder.revision + 1, label }
-        : { kind: "connection", id: selectedConnection!.id, expectedRevision: selectedConnection!.revision + 1, label };
-      if (selectedFolder) await perform(() => bridge.deleteFolder(selectedFolder.id, selectedFolder.revision), "文件夹已删除");
-      if (selectedConnection) await perform(() => bridge.deleteConnection(selectedConnection.id, selectedConnection.revision), "连接已删除");
+      const undoDelete: UndoDelete = {
+        kind: target.kind,
+        id: target.value.id,
+        expectedRevision: target.value.revision + 1,
+        label,
+      };
+      if (target.kind === "folder") await perform(() => bridge.deleteFolder(target.value.id, target.value.revision), "文件夹已删除");
+      if (target.kind === "connection") await perform(() => bridge.deleteConnection(target.value.id, target.value.revision), "连接已删除");
       await refresh();
       const openTabs = state.openTabs.filter((id) => id !== undoDelete.id);
       dispatch({ type: "patch", value: { selection: null, openTabs, activeTab: state.activeTab === undoDelete.id ? openTabs.at(-1) ?? null : state.activeTab, undoDelete } });
+      setPendingDelete(null);
     } catch {}
+  };
+
+  const openConnectionMenu = (connection: ConnectionProfile, event: React.MouseEvent) => {
+    event.preventDefault();
+    dispatch({ type: "patch", value: { selection: { kind: "connection", id: connection.id }, error: null } });
+    setConnectionMenu({
+      connection,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 150)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 92)),
+    });
   };
 
   const undoDelete = async () => {
@@ -495,11 +537,11 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
         <label className="search-box"><Search size={15} aria-hidden="true" /><input aria-label="搜索工作区" placeholder="搜索" value={state.query} onChange={(event) => dispatch({ type: "patch", value: { query: event.target.value } })} /></label>
         <div className="connection-tree" role="tree" aria-label="连接树">
           {state.query.trim() ? state.searchResults.map((result) => (
-            <button className="tree-row search-result" type="button" key={`${result.kind}-${result.id}`} onClick={() => result.kind === "connection" ? openConnection(result.id) : result.kind === "folder" ? dispatch({ type: "patch", value: { selection: { kind: "folder", id: result.id } } }) : result.kind === "snippet" ? showTools() : undefined}>
+            <button className="tree-row search-result" type="button" key={`${result.kind}-${result.id}`} onContextMenu={(event) => { const connection = result.kind === "connection" ? snapshot.connections.find((value) => value.id === result.id) : undefined; if (connection) openConnectionMenu(connection, event); }} onClick={() => result.kind === "connection" ? openConnection(result.id) : result.kind === "folder" ? dispatch({ type: "patch", value: { selection: { kind: "folder", id: result.id } } }) : result.kind === "snippet" ? showTools() : undefined}>
               {result.kind === "folder" ? <FolderIcon size={15} /> : <Server size={15} />}<span><strong>{result.label}</strong><small>{result.detail}</small></span>
             </button>
           )) : (
-            <TreeView snapshot={snapshot} selection={state.selection} onSelect={(selection) => dispatch({ type: "patch", value: { selection } })} onOpenConnection={openConnection} />
+            <TreeView snapshot={snapshot} selection={state.selection} onSelect={(selection) => dispatch({ type: "patch", value: { selection } })} onOpenConnection={openConnection} onContextMenu={openConnectionMenu} />
           )}
         </div>
       </aside>}
@@ -525,7 +567,7 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
       <PanelSeparator orientation="vertical" area="right-resize" label="调整详情面板宽度" onPointerDown={(event) => beginResize("right", event)} onNudge={(delta) => nudgeLayout("right", -delta)} />
 
       <aside className="inspector-panel" aria-label="详情">
-        <div className="panel-header tools-panel-header"><div className="panel-mode"><button type="button" aria-current={rightMode === "details"} onClick={() => setRightMode("details")}>详情</button><button type="button" aria-current={rightMode === "tools"} onClick={showTools}>工具</button></div>{rightMode === "details" && (selectedFolder || selectedConnection) && <div><button className="icon-button" type="button" aria-label="编辑所选项目" title="编辑" onClick={() => dispatch({ type: "patch", value: { entityDialog: selectedFolder ? { kind: "folder", value: selectedFolder } : { kind: "connection", value: selectedConnection }, error: null } })}><Edit3 size={15} /></button><button className="icon-button danger" type="button" aria-label="删除所选项目" title="删除" onClick={() => void deleteSelected()}><Trash2 size={15} /></button></div>}</div>
+        <div className="panel-header tools-panel-header"><div className="panel-mode"><button type="button" aria-current={rightMode === "details"} onClick={() => setRightMode("details")}>详情</button><button type="button" aria-current={rightMode === "tools"} onClick={showTools}>工具</button></div>{rightMode === "details" && (selectedFolder || selectedConnection) && <div><button className="icon-button" type="button" aria-label="编辑所选项目" title="编辑" onClick={() => dispatch({ type: "patch", value: { entityDialog: selectedFolder ? { kind: "folder", value: selectedFolder } : { kind: "connection", value: selectedConnection }, error: null } })}><Edit3 size={15} /></button><button className="icon-button danger" type="button" aria-label="删除所选项目" title="删除" onClick={requestDeleteSelected}><Trash2 size={15} /></button></div>}</div>
         {rightMode === "details" && <Inspector folder={selectedFolder} connection={selectedConnection} snapshot={snapshot} connected={selectedConnection ? readyConnectionIds.includes(selectedConnection.id) : false} monitorView={selectedConnection ? monitorViews[selectedConnection.id] : undefined} onApproveMonitor={() => selectedConnection && void approveMonitorHostKey(selectedConnection.id)} />}
         {toolsMounted && <div className="tools-workspace-shell" hidden={rightMode !== "tools"}><Suspense fallback={<div className="empty-list">正在加载效率工具</div>}><ToolsWorkspace bridge={bridge} connections={snapshot.connections} snippets={snapshot.snippets} activeConnectionId={activeConnection?.temporary ? null : activeConnection?.id ?? null} readySessions={readySessions} onInsert={(connectionId, text) => { const openTabs = state.openTabs.includes(connectionId) ? state.openTabs : [...state.openTabs, connectionId]; dispatch({ type: "patch", value: { openTabs, activeTab: connectionId, selection: { kind: "connection", id: connectionId } } }); insertSequenceRef.current += 1; setInsertRequest({ sequence: insertSequenceRef.current, connectionId, text }); }} onRefresh={async () => { await refresh(); }} onActivity={addActivity} /></Suspense></div>}
       </aside>
@@ -542,6 +584,11 @@ export function App({ bridge = workspaceBridge }: { bridge?: WorkspaceBridge }) 
       {state.settingsOpen && <SettingsDialog snapshot={snapshot} busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { settingsOpen: false, error: null } })} onSaveProxy={async (input: ProxyInput, existing?: ProxyProfile) => { await perform(() => existing ? bridge.updateProxy(existing.id, existing.revision, input) : bridge.createProxy(input), existing ? "代理已更新" : "代理已创建"); await refresh(); }} onDeleteProxy={async (value) => { if (!window.confirm(`删除“${value.name}”？`)) return; await perform(() => bridge.deleteProxy(value.id, value.revision), "代理已删除"); await refresh(); }} onConfigureProxyCredential={configureProxyCredential} proxyCredentialStatus={proxyCredentialStatus} onSaveTerminal={async (input: TerminalProfileInput, existing?: TerminalProfile) => { await perform(() => existing ? bridge.updateTerminal(existing.id, existing.revision, input) : bridge.createTerminal(input), existing ? "终端配置已更新" : "终端配置已创建"); await refresh(); }} onDeleteTerminal={async (value) => { if (!window.confirm(`删除“${value.name}”？`)) return; await perform(() => bridge.deleteTerminal(value.id, value.revision), "终端配置已删除"); await refresh(); }} />}
       {state.backupOpen && <BackupDialog busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { backupOpen: false, error: null } })} onExport={(password) => perform(() => bridge.exportWorkspace(password), "加密备份已导出")} onValidate={(fileName, password) => perform(() => bridge.validateImport(fileName, password), "备份验证通过")} onRestore={async (fileName, password) => { const result = await perform(() => bridge.restoreImport(fileName, password), "工作区已恢复"); await refresh(); return result; }} />}
       {state.quickConnectOpen && <QuickConnectDialog busy={state.busy} error={state.error} onClose={() => dispatch({ type: "patch", value: { quickConnectOpen: false, error: null } })} onConnect={openQuickConnection} />}
+      {connectionMenu && <ContextMenu x={connectionMenu.x} y={connectionMenu.y} label={`${connectionMenu.connection.name} 操作`} onClose={() => setConnectionMenu(null)} items={[
+        { label: "编辑连接", icon: <Edit3 size={15} />, onSelect: () => dispatch({ type: "patch", value: { entityDialog: { kind: "connection", value: connectionMenu.connection }, error: null } }) },
+        { label: "删除连接", icon: <Trash2 size={15} />, danger: true, onSelect: () => setPendingDelete({ kind: "connection", value: connectionMenu.connection }) },
+      ]} />}
+      {pendingDelete && <ConfirmDialog title={`删除${pendingDelete.kind === "connection" ? "连接" : "文件夹"}`} description={`确定删除“${pendingDelete.value.name}”吗？删除后可从底部状态栏撤销。`} busy={state.busy} onClose={() => setPendingDelete(null)} onConfirm={() => deleteEntity(pendingDelete)} />}
     </main>
   );
 }
@@ -552,21 +599,21 @@ function ConnectionIcon({ kind }: { kind: ConnectionProfile["kind"] }) {
   return <Server size={15} aria-hidden="true" />;
 }
 
-function TreeView({ snapshot, selection, onSelect, onOpenConnection }: { snapshot: WorkspaceSnapshot; selection: Selection; onSelect(value: Selection): void; onOpenConnection(id: string): void }) {
+function TreeView({ snapshot, selection, onSelect, onOpenConnection, onContextMenu }: { snapshot: WorkspaceSnapshot; selection: Selection; onSelect(value: Selection): void; onOpenConnection(id: string): void; onContextMenu(value: ConnectionProfile, event: React.MouseEvent): void }) {
   const roots = snapshot.folders.filter((folder) => !folder.parentId);
   const rootConnections = snapshot.connections.filter((connection) => !connection.folderId);
-  return <>{roots.map((folder) => <FolderNode key={folder.id} folder={folder} snapshot={snapshot} selection={selection} onSelect={onSelect} onOpenConnection={onOpenConnection} />)}{rootConnections.map((connection) => <ConnectionRow key={connection.id} value={connection} selected={selection?.kind === "connection" && selection.id === connection.id} onSelect={onOpenConnection} />)}{roots.length === 0 && rootConnections.length === 0 && <div className="empty-list">暂无连接</div>}</>;
+  return <>{roots.map((folder) => <FolderNode key={folder.id} folder={folder} snapshot={snapshot} selection={selection} onSelect={onSelect} onOpenConnection={onOpenConnection} onContextMenu={onContextMenu} />)}{rootConnections.map((connection) => <ConnectionRow key={connection.id} value={connection} selected={selection?.kind === "connection" && selection.id === connection.id} onSelect={onOpenConnection} onContextMenu={onContextMenu} />)}{roots.length === 0 && rootConnections.length === 0 && <div className="empty-list">暂无连接</div>}</>;
 }
 
-function FolderNode({ folder, snapshot, selection, onSelect, onOpenConnection }: { folder: Folder; snapshot: WorkspaceSnapshot; selection: Selection; onSelect(value: Selection): void; onOpenConnection(id: string): void }) {
+function FolderNode({ folder, snapshot, selection, onSelect, onOpenConnection, onContextMenu }: { folder: Folder; snapshot: WorkspaceSnapshot; selection: Selection; onSelect(value: Selection): void; onOpenConnection(id: string): void; onContextMenu(value: ConnectionProfile, event: React.MouseEvent): void }) {
   const [expanded, setExpanded] = useReducer((value) => !value, true);
   const children = snapshot.folders.filter((value) => value.parentId === folder.id);
   const connections = snapshot.connections.filter((value) => value.folderId === folder.id);
-  return <div role="treeitem" aria-expanded={expanded}><button className={`tree-row ${selection?.kind === "folder" && selection.id === folder.id ? "selected" : ""}`} type="button" onClick={() => { onSelect({ kind: "folder", id: folder.id }); setExpanded(); }} onKeyDown={(event) => { if (event.key === "ArrowRight" && !expanded) { event.preventDefault(); setExpanded(); } if (event.key === "ArrowLeft" && expanded) { event.preventDefault(); setExpanded(); } }}><span className="tree-expander" aria-hidden="true">{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span><FolderIcon size={15} /><span>{folder.name}</span></button>{expanded && <div role="group" className="tree-group">{children.map((child) => <FolderNode key={child.id} folder={child} snapshot={snapshot} selection={selection} onSelect={onSelect} onOpenConnection={onOpenConnection} />)}{connections.map((connection) => <ConnectionRow key={connection.id} value={connection} selected={selection?.kind === "connection" && selection.id === connection.id} onSelect={onOpenConnection} />)}</div>}</div>;
+  return <div role="treeitem" aria-expanded={expanded}><button className={`tree-row ${selection?.kind === "folder" && selection.id === folder.id ? "selected" : ""}`} type="button" onClick={() => { onSelect({ kind: "folder", id: folder.id }); setExpanded(); }} onKeyDown={(event) => { if (event.key === "ArrowRight" && !expanded) { event.preventDefault(); setExpanded(); } if (event.key === "ArrowLeft" && expanded) { event.preventDefault(); setExpanded(); } }}><span className="tree-expander" aria-hidden="true">{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span><FolderIcon size={15} /><span>{folder.name}</span></button>{expanded && <div role="group" className="tree-group">{children.map((child) => <FolderNode key={child.id} folder={child} snapshot={snapshot} selection={selection} onSelect={onSelect} onOpenConnection={onOpenConnection} onContextMenu={onContextMenu} />)}{connections.map((connection) => <ConnectionRow key={connection.id} value={connection} selected={selection?.kind === "connection" && selection.id === connection.id} onSelect={onOpenConnection} onContextMenu={onContextMenu} />)}</div>}</div>;
 }
 
-function ConnectionRow({ value, selected, onSelect }: { value: ConnectionProfile; selected: boolean; onSelect(id: string): void }) {
-  return <button className={`tree-row connection-row ${selected ? "selected" : ""}`} role="treeitem" type="button" onClick={() => onSelect(value.id)}><ConnectionIcon kind={value.kind} /><span><strong>{value.name}</strong><small>{value.kind === "local" ? "Local" : `${value.host}:${value.port}`}</small></span></button>;
+function ConnectionRow({ value, selected, onSelect, onContextMenu }: { value: ConnectionProfile; selected: boolean; onSelect(id: string): void; onContextMenu(value: ConnectionProfile, event: React.MouseEvent): void }) {
+  return <button className={`tree-row connection-row ${selected ? "selected" : ""}`} role="treeitem" type="button" onContextMenu={(event) => onContextMenu(value, event)} onClick={() => onSelect(value.id)}><ConnectionIcon kind={value.kind} /><span><strong>{value.name}</strong><small>{value.kind === "local" ? "Local" : `${value.host}:${value.port}`}</small></span></button>;
 }
 
 function WorkspaceOverview({ snapshot }: { snapshot: WorkspaceSnapshot }) {

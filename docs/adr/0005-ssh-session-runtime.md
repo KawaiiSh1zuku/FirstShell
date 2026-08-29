@@ -8,7 +8,7 @@
 
 M2 需要同时满足日常交互、秘密隔离和 Windows 本地终端。纯异步 SSH 有利于统一状态与测试，但少数旧服务器可能只与系统 OpenSSH 兼容；Windows ConPTY 又提供阻塞式 master、reader、writer 和 child 句柄，若在 Tokio worker 中跨锁等待，关闭路径容易死锁。
 
-Rust 必须继续拥有认证材料和连接生命周期，WebView 只持有公开句柄与输出。断线后自动重放输入会在远端状态未知时重复执行命令，因此不能作为透明恢复策略。
+Rust 必须继续拥有连接生命周期和认证材料的持久存储；WebView 除专用密码框的短生命周期局部值外，只持有公开句柄与输出。断线后自动重放输入会在远端状态未知时重复执行命令，因此不能作为透明恢复策略。
 
 ## 方案比较
 
@@ -31,6 +31,6 @@ React 端每个 pane 维护 session generation。异步 open 迟到时立即关�
 
 ## 结果
 
-正面结果是认证秘密不进入 WebView，连接失败语义可测试，本地 PTY 不阻塞 Tokio worker，断线不会重复执行命令。代价是同时维护纯 Rust 与窄范围 OpenSSH transport，并需要对 actor、线程关闭和前端异步生命周期持续回归。
+正面结果是认证秘密不进入前端持久状态、普通业务 DTO、argv 或日志，持久秘密由 OS keyring 管理；连接失败语义可测试，本地 PTY 不阻塞 Tokio worker，断线不会重复执行命令。代价是专用密码框提交期间 WebView 内存会短暂持有秘密，同时仍需维护纯 Rust 与窄范围 OpenSSH transport，并持续回归 actor、线程关闭和前端异步生命周期。
 
 M3 必须复用现有 actor 与 [ADR-0003](./0003-dual-lane-ssh.md) 的 lane 边界，不得让 SFTP 或代理功能绕过 host key、认证和会话配额。若扩大 OpenSSH 回退认证方式，必须先证明秘密传递不经过 argv、环境变量或临时明文文件，并更新本 ADR。

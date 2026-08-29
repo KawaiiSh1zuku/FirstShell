@@ -171,6 +171,56 @@ describe("M2 terminal workspace", () => {
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
 
+  it("uses the themed credential dialog and persists private-key passphrases", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const bridge = createPreviewBridge();
+    const successfulOpen = bridge.openTerminal;
+    bridge.openTerminal = vi.fn()
+      .mockRejectedValueOnce({ code: "CREDENTIAL_REQUIRED", message: "SSH credential is not configured" })
+      .mockImplementation(successfulOpen);
+    const configureCredential = vi.spyOn(bridge, "configureCredential");
+    const privateKeyConnection = {
+      ...connection,
+      authentication: "private_key" as const,
+      privateKeyPath: "C:\\keys\\server.pem",
+    };
+    const user = userEvent.setup();
+    render(<TerminalWorkspace bridge={bridge} connections={[privateKeyConnection]} activeConnectionId={privateKeyConnection.id} profiles={[profile]} onActivity={() => undefined} onReadySessionsChange={() => undefined} onReadyConnectionsChange={() => undefined} insertRequest={null} />);
+
+    await user.click(await screen.findByRole("button", { name: "配置凭据" }));
+    expect(screen.getByRole("dialog", { name: "输入私钥口令" })).toBeTruthy();
+    await user.type(screen.getByLabelText("私钥口令"), "passphrase-value");
+    await user.click(screen.getByRole("button", { name: "保存并重连" }));
+    await waitFor(() => expect(configureCredential).toHaveBeenCalledWith(privateKeyConnection.id, "passphrase-value"));
+    expect(await screen.findByText("已连接")).toBeTruthy();
+  });
+
+  it("passes quick-connect passwords once without persisting them", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const bridge = createPreviewBridge();
+    const successfulOpen = bridge.openQuickTerminal;
+    bridge.openQuickTerminal = vi.fn()
+      .mockRejectedValueOnce({ code: "CREDENTIAL_REQUIRED", message: "provide the temporary SSH credential before connecting" })
+      .mockImplementation(successfulOpen);
+    const configureCredential = vi.spyOn(bridge, "configureCredential");
+    const temporaryConnection = {
+      ...connection,
+      id: "quick-test",
+      authentication: "password" as const,
+      temporary: true,
+    };
+    const user = userEvent.setup();
+    render(<TerminalWorkspace bridge={bridge} connections={[temporaryConnection]} activeConnectionId={temporaryConnection.id} profiles={[profile]} onActivity={() => undefined} onReadySessionsChange={() => undefined} onReadyConnectionsChange={() => undefined} insertRequest={null} />);
+
+    await user.click(await screen.findByRole("button", { name: "配置凭据" }));
+    expect(screen.getByRole("dialog", { name: "输入 SSH 密码" })).toBeTruthy();
+    await user.type(screen.getByLabelText("密码"), "one-time-password");
+    await user.click(screen.getByRole("button", { name: "连接" }));
+    await waitFor(() => expect(bridge.openQuickTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ credential: "one-time-password" }), expect.anything(), expect.any(Function)));
+    expect(configureCredential).not.toHaveBeenCalled();
+    expect(await screen.findByText("已连接")).toBeTruthy();
+  });
+
   it("records completed commands and inserts snippet text without Enter", async () => {
     vi.stubGlobal("ResizeObserver", MockResizeObserver);
     const bridge = createPreviewBridge();

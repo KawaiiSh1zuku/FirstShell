@@ -15,7 +15,7 @@
 | 会话运行时 | 部分完成 | 有界会话注册表、32 会话默认上限、64 KiB 单次输入上限、状态机、连接超时、尺寸校验、显式重连且不重放输入 | Windows 本地 PTY 驱动需修复后重跑全部 session 测试 |
 | 纯 Rust SSH | 已实现，已有集成证据 | password/private-key/keyboard-interactive/agent、严格 TOFU、host key 变化阻断、按主机弱算法例外、PTY、resize、保活、UTF-8/GBK/Big5 和 banner 清洗 | 完成全量 Clippy/测试及最终秘密扫描 |
 | OpenSSH 兼容回退 | 已实现受限入口，待复验 | 仅在连接类失败时回退；强制 app-owned known_hosts；不把秘密放入 argv；桌面入口目前限定 agent 认证 | 增加/确认不回退 host key 与认证错误的测试 |
-| Tauri 会话 IPC | 已实现，待全量复验 | 公开会话 DTO、Tauri Channel、原生凭据对话框到 OS keyring、Vault 锁定关闭会话、日志开关和 7 天清理 | 最近的 quick connect/fallback 调整后需重新执行 desktop check |
+| Tauri 会话 IPC | 已实现，待全量复验 | 公开会话 DTO、Tauri Channel、主题化专用凭据弹窗到 OS keyring、Vault 锁定关闭会话、日志开关和 7 天清理 | 最近的 quick connect/fallback 调整后需重新执行 desktop check |
 | 终端工作台 | 已实现，已有前端证据 | xterm.js、多标签、最多四分屏、每 pane 独立会话、尺寸同步、TOFU 确认、显式重连、临时快速连接、显式日志 | 进行浏览器/桌面视觉检查及真实 SSH 手工烟测 |
 | 依赖与文档 | 未收口 | 已新增 Rust/前端依赖并更新锁文件 | 更新许可证白名单和审查文档；同步架构、安全、数据模型、功能矩阵、里程碑和 M2 验收记录 |
 
@@ -79,7 +79,7 @@ apps/desktop/src/TerminalWorkspace.test.tsx
 
 1. 重构 `crates/session/src/lib.rs` 的本地 PTY：专用线程持有 `master`、`writer` 和 `child`，使用 `blocking_recv` 消费命令；关闭时 kill 并释放所有句柄，保证 reader 收到 EOF。
 2. 单独运行 Windows PTY 烟测，确认命令输出、关闭返回和子进程回收；再运行 `cargo test -p firstshell-session --locked`。
-3. 补齐 quick connect 与 OpenSSH 回退边界测试，确认 WebView command 参数、argv 和日志均不包含 SSH 密码或私钥口令。
+3. 补齐 quick connect 与 OpenSSH 回退边界测试，确认 SSH 密码或私钥口令只存在于专用提交 IPC，不进入普通 DTO、持久前端状态、argv 和日志。
 4. 审查 `portable-pty`、`encoding_rs`、`tinyfiledialogs`、`@xterm/xterm`、`@xterm/addon-fit` 及新增传递依赖的许可证，更新自动门禁白名单和 `docs/license-review.md`。
 5. 运行完整门禁：Rustfmt、workspace Clippy `-D warnings`、workspace tests、前端 tests/build、许可证检查、文档链接检查和 `git diff --check`。
 6. 完成真实桌面视觉检查、10 个活跃终端压力验证和本地/测试 SSH 烟测，保存可重复证据。
