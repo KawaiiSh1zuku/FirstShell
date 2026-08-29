@@ -4,12 +4,13 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPreviewBridge } from "./bridge";
 import { TerminalWorkspace } from "./TerminalWorkspace";
-import type { ConnectionProfile, DesktopSessionEvent, HostKeyEvidence, TerminalProfile } from "./types";
+import type { ConnectionProfile, DesktopSessionEvent, HostKeyEvidence, SessionSnapshot, TerminalProfile, TerminalSize } from "./types";
 import { DEFAULT_CUSTOM_PALETTE } from "./terminalThemes";
 
 const xtermMock = vi.hoisted(() => {
   const terminalInstances: Array<{ dispose: ReturnType<typeof vi.fn>; dataCallback?: (data: string) => void }> = [];
   const terminalOptions: unknown[] = [];
+  const fitInstances: Array<{ fit: ReturnType<typeof vi.fn> }> = [];
   class MockTerminal {
     cols = 100;
     rows = 30;
@@ -23,11 +24,11 @@ const xtermMock = vi.hoisted(() => {
     onData = vi.fn((callback: (data: string) => void) => { this.dataCallback = callback; return { dispose: vi.fn() }; });
     constructor(options: unknown) { terminalInstances.push(this); terminalOptions.push(options); }
   }
-  return { terminalInstances, terminalOptions, MockTerminal };
+  return { fitInstances, terminalInstances, terminalOptions, MockTerminal };
 });
 
 vi.mock("@xterm/xterm", () => ({ Terminal: xtermMock.MockTerminal }));
-vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit = vi.fn(); } }));
+vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit = vi.fn(); constructor() { xtermMock.fitInstances.push(this); } } }));
 
 class MockResizeObserver {
   observe() {}
@@ -70,21 +71,39 @@ const profile: TerminalProfile = {
 
 afterEach(() => {
   cleanup();
+  xtermMock.fitInstances.length = 0;
   xtermMock.terminalInstances.length = 0;
   xtermMock.terminalOptions.length = 0;
   vi.restoreAllMocks();
 });
 
 describe("M2 terminal workspace", () => {
-  it("closes stale sessions created by StrictMode effect replay", async () => {
+  it("closes stale sessions without accepting their late closed events", async () => {
     vi.stubGlobal("ResizeObserver", MockResizeObserver);
     const bridge = createPreviewBridge();
-    const open = vi.spyOn(bridge, "openTerminal");
+    const pending: Array<{
+      onEvent(event: DesktopSessionEvent): void;
+      resolve(session: SessionSnapshot): void;
+      size: TerminalSize;
+    }> = [];
+    const open = vi.fn((_connectionId: string, size: TerminalSize, onEvent: (event: DesktopSessionEvent) => void) => new Promise<SessionSnapshot>((resolve) => pending.push({ onEvent, resolve, size })));
+    bridge.openTerminal = open;
     const close = vi.spyOn(bridge, "closeTerminal");
     const activity = vi.fn();
-    render(<StrictMode><TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={activity} onReadySessionsChange={() => undefined} onReadyConnectionsChange={() => undefined} insertRequest={null} /></StrictMode>);
+    const readyConnections = vi.fn();
+    render(<StrictMode><TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={activity} onReadySessionsChange={() => undefined} onReadyConnectionsChange={readyConnections} insertRequest={null} /></StrictMode>);
     await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+
+    pending[1].resolve({ id: "session-current", state: "ready", size: pending[1].size });
+    expect(await screen.findByText("已连接")).toBeTruthy();
+    await waitFor(() => expect(readyConnections).toHaveBeenLastCalledWith([connection.id]));
+
+    pending[0].resolve({ id: "session-stale", state: "ready", size: pending[0].size });
+    await waitFor(() => expect(close).toHaveBeenCalledWith("session-stale"));
+    const callCount = readyConnections.mock.calls.length;
+    pending[0].onEvent({ sessionId: "session-stale", event: { type: "state", state: "closed" } });
+    await waitFor(() => expect(screen.getByText("已连接")).toBeTruthy());
+    expect(readyConnections.mock.calls.slice(callCount).some(([ids]) => ids.length === 0)).toBe(false);
     await waitFor(() => expect(activity).toHaveBeenCalledTimes(1));
   });
 
@@ -104,6 +123,27 @@ describe("M2 terminal workspace", () => {
     expect(xtermMock.terminalInstances).toHaveLength(2);
     view.unmount();
     await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
+  });
+
+  it("refits an existing pane when the workspace becomes visible again", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const bridge = createPreviewBridge();
+    const close = vi.spyOn(bridge, "closeTerminal");
+    const onActivity = vi.fn();
+    const onReadySessionsChange = vi.fn();
+    const onReadyConnectionsChange = vi.fn();
+    const view = render(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={onActivity} onReadySessionsChange={onReadySessionsChange} onReadyConnectionsChange={onReadyConnectionsChange} insertRequest={null} />);
+    await screen.findByText("已连接");
+    const fit = xtermMock.fitInstances[0].fit;
+    await waitFor(() => expect(fit).toHaveBeenCalled());
+    const visibleFitCount = fit.mock.calls.length;
+
+    view.rerender(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={null} profiles={[profile]} onActivity={onActivity} onReadySessionsChange={onReadySessionsChange} onReadyConnectionsChange={onReadyConnectionsChange} insertRequest={null} />);
+    await waitFor(() => expect(view.container.querySelector(".connection-terminal")?.getAttribute("aria-hidden")).toBe("true"));
+    view.rerender(<TerminalWorkspace bridge={bridge} connections={[connection]} activeConnectionId={connection.id} profiles={[profile]} onActivity={onActivity} onReadySessionsChange={onReadySessionsChange} onReadyConnectionsChange={onReadyConnectionsChange} insertRequest={null} />);
+
+    await waitFor(() => expect(fit.mock.calls.length).toBeGreaterThan(visibleFitCount));
+    expect(close).not.toHaveBeenCalled();
   });
 
   it("passes a validated custom ANSI palette to xterm", async () => {

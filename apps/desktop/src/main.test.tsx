@@ -6,7 +6,7 @@ import { App } from "./main";
 import type { VaultStatus } from "./types";
 
 vi.mock("./TerminalWorkspace", () => ({
-  TerminalWorkspace: ({ insertRequest, onReadyConnectionsChange }: { insertRequest?: { sequence: number } | null; onReadyConnectionsChange(ids: string[]): void }) => <div data-testid="terminal-workspace"><span data-testid="insert-sequence">{insertRequest?.sequence ?? "none"}</span><button type="button" onClick={() => onReadyConnectionsChange(["connection-edge"])}>模拟终端就绪</button><button type="button" onClick={() => onReadyConnectionsChange([])}>模拟终端断开</button></div>,
+  TerminalWorkspace: ({ activeConnectionId, insertRequest, onReadyConnectionsChange }: { activeConnectionId: string | null; insertRequest?: { sequence: number } | null; onReadyConnectionsChange(ids: string[]): void }) => <div data-testid="terminal-workspace" data-active-connection-id={activeConnectionId ?? "none"}><span data-testid="insert-sequence">{insertRequest?.sequence ?? "none"}</span><button type="button" onClick={() => onReadyConnectionsChange(["connection-edge"])}>模拟终端就绪</button><button type="button" onClick={() => onReadyConnectionsChange([])}>模拟终端断开</button></div>,
 }));
 
 vi.mock("./ToolsWorkspace", async () => {
@@ -27,6 +27,12 @@ afterEach(() => {
   delete document.documentElement.dataset.resolvedTheme;
 });
 
+async function openConnectionsPage() {
+  const button = await screen.findByRole("button", { name: "服务器" });
+  fireEvent.click(button);
+  return screen.findByRole("tree", { name: "连接树" });
+}
+
 describe("M1 workspace accessibility and vault state", () => {
   it("automatically unlocks an initialized vault with the OS device key", async () => {
     const bridge = createPreviewBridge();
@@ -45,7 +51,8 @@ describe("M1 workspace accessibility and vault state", () => {
     bridge.unlock = unlock;
 
     render(<App bridge={bridge} />);
-    expect(await screen.findByText("Edge Gateway")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "服务器" })).toBeTruthy();
+    expect(screen.queryByRole("tree", { name: "连接树" })).toBeNull();
     expect(unlock).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("本地仓库已锁定")).toBeNull();
   });
@@ -76,7 +83,7 @@ describe("M1 workspace accessibility and vault state", () => {
     await user.clear(confirmation);
     await user.type(confirmation, "mandatory recovery password");
     await user.click(screen.getByRole("button", { name: "创建仓库" }));
-    expect(await screen.findByRole("tree", { name: "连接树" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "服务器" })).toBeTruthy();
   });
 
   it("switches to recovery password when the OS key is unavailable", async () => {
@@ -103,7 +110,7 @@ describe("M1 workspace accessibility and vault state", () => {
     expect(screen.getByRole("button", { name: "恢复口令" }).getAttribute("aria-pressed")).toBe("true");
     await user.type(screen.getByLabelText("恢复口令"), "mandatory recovery password");
     await user.click(screen.getByRole("button", { name: "解锁" }));
-    expect(await screen.findByText("Edge Gateway")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "服务器" })).toBeTruthy();
   });
 
   it("supports keyboard panel resizing and removes decrypted DOM on lock", async () => {
@@ -122,33 +129,42 @@ describe("M1 workspace accessibility and vault state", () => {
 
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
-    expect(await screen.findByText("Edge Gateway")).toBeTruthy();
-    const separator = screen.getByRole("separator", { name: "调整连接面板宽度" });
+    expect(await screen.findByRole("button", { name: "服务器" })).toBeTruthy();
+    const separator = screen.getByRole("separator", { name: "调整详情与工具面板宽度" });
     separator.focus();
     await user.keyboard("{ArrowRight}");
-    await waitFor(() => expect(saveLayout).toHaveBeenCalled());
+    await waitFor(() => expect(saveLayout).toHaveBeenCalledWith(expect.objectContaining({ rightWidth: 300 })));
+    await openConnectionsPage();
+    expect(screen.getByText("Edge Gateway")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "锁定仓库" }));
     expect(await screen.findByText("本地仓库已锁定")).toBeTruthy();
     expect(screen.queryByText("Edge Gateway")).toBeNull();
   });
 
-  it("collapses the connection panel and persists the layout preference", async () => {
+  it("opens the server page from the top bar and returns after opening a connection", async () => {
     const bridge = createPreviewBridge();
-    const saveLayout = vi.fn(bridge.saveLayout);
-    bridge.saveLayout = saveLayout;
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
 
+    const serverButton = await screen.findByRole("button", { name: "服务器" });
+    expect(serverButton.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByRole("tree", { name: "连接树" })).toBeNull();
+    await user.click(serverButton);
     expect(await screen.findByRole("tree", { name: "连接树" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "收起连接栏" }));
-    await waitFor(() => expect(screen.queryByRole("tree", { name: "连接树" })).toBeNull());
-    expect(screen.queryByRole("separator", { name: "调整连接面板宽度" })).toBeNull();
-    expect(screen.getByRole("separator", { name: "调整详情面板宽度" }).classList.contains("right-resize")).toBe(true);
-    expect(saveLayout).toHaveBeenCalledWith(expect.objectContaining({ leftOpen: false }));
+    expect(serverButton.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("连接管理")).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "展开连接栏" }));
+    await user.dblClick(screen.getByRole("treeitem", { name: /^Edge Gateway/ }));
+    expect(await screen.findByRole("tab", { name: /Edge Gateway/ })).toBeTruthy();
+    expect(screen.getAllByRole("tab", { name: /Edge Gateway/ })).toHaveLength(1);
+    expect(screen.queryByRole("tree", { name: "连接树" })).toBeNull();
+    expect(serverButton.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByText("本地工作区")).toBeTruthy();
+    expect((await screen.findByTestId("terminal-workspace")).getAttribute("data-active-connection-id")).toBe("connection-edge");
+
+    await user.click(serverButton);
     expect(await screen.findByRole("tree", { name: "连接树" })).toBeTruthy();
-    expect(saveLayout).toHaveBeenCalledWith(expect.objectContaining({ leftOpen: true }));
+    expect(screen.getByTestId("terminal-workspace").getAttribute("data-active-connection-id")).toBe("none");
   });
 
   it("starts and stops host monitoring with a ready SSH terminal", async () => {
@@ -160,6 +176,7 @@ describe("M1 workspace accessibility and vault state", () => {
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
 
+    await openConnectionsPage();
     await user.click(await screen.findByRole("treeitem", { name: /^Edge Gateway/ }));
     const identity = screen.getByRole("heading", { name: "Edge Gateway" }).parentElement;
     expect(identity?.classList.contains("inspector-identity")).toBe(true);
@@ -204,6 +221,7 @@ describe("M1 workspace accessibility and vault state", () => {
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
 
+    await openConnectionsPage();
     const connection = await screen.findByRole("treeitem", { name: /^Edge Gateway/ });
     fireEvent.contextMenu(connection, { clientX: 100, clientY: 120 });
     await user.click(screen.getByRole("menuitem", { name: "删除连接" }));
@@ -224,6 +242,7 @@ describe("M1 workspace accessibility and vault state", () => {
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
 
+    await openConnectionsPage();
     const connection = await screen.findByRole("treeitem", { name: /^Edge Gateway/ });
     fireEvent.contextMenu(connection, { clientX: 100, clientY: 120 });
     await user.click(screen.getByRole("menuitem", { name: "编辑连接" }));
@@ -238,7 +257,7 @@ describe("M1 workspace accessibility and vault state", () => {
     const bridge = createPreviewBridge();
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
-    await screen.findByText("Edge Gateway");
+    await screen.findByRole("button", { name: "服务器" });
 
     const light = screen.getByRole("button", { name: "浅色" });
     const dark = screen.getByRole("button", { name: "深色" });
@@ -262,12 +281,15 @@ describe("M1 workspace accessibility and vault state", () => {
     const bridge = createPreviewBridge();
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
-    await screen.findByText("Edge Gateway");
+    await screen.findByRole("button", { name: "服务器" });
+    await openConnectionsPage();
     await user.click(screen.getByRole("button", { name: "快速连接" }));
     await user.type(screen.getByLabelText("主机"), "temporary.example");
     await user.type(screen.getByLabelText("用户名"), "operator");
     await user.click(screen.getByRole("button", { name: "连接" }));
     expect(await screen.findByRole("tab", { name: /temporary\.example/ })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "服务器" }));
+    expect(await screen.findByRole("tree", { name: "连接树" })).toBeTruthy();
     expect(screen.queryByRole("treeitem", { name: /temporary\.example/ })).toBeNull();
   });
 
@@ -275,11 +297,14 @@ describe("M1 workspace accessibility and vault state", () => {
     const bridge = createPreviewBridge();
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
-    await screen.findByText("Edge Gateway");
+    await screen.findByRole("button", { name: "服务器" });
 
     await user.click(screen.getByRole("button", { name: "工具" }));
     await user.click(await screen.findByRole("button", { name: "推进工具状态" }));
     expect(screen.getByTestId("tool-local-state").textContent).toBe("1");
+    await openConnectionsPage();
+    expect(screen.getByTestId("tool-local-state").textContent).toBe("1");
+    await user.click(screen.getByRole("button", { name: "服务器" }));
 
     await user.click(screen.getByRole("button", { name: "详情" }));
     expect(screen.getByTestId("tools-workspace-mock").closest("[hidden]")).toBeTruthy();
@@ -292,7 +317,7 @@ describe("M1 workspace accessibility and vault state", () => {
     const bridge = createPreviewBridge();
     const user = userEvent.setup();
     render(<App bridge={bridge} />);
-    await screen.findByText("Edge Gateway");
+    await screen.findByRole("button", { name: "服务器" });
 
     await user.click(screen.getByRole("button", { name: "工具" }));
     const insert = await screen.findByRole("button", { name: "测试插入" });

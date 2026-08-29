@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-08-24
-- 影响范围：SSH 受控命令、会话广播、SQLite schema、Vault、SFTP/ZMODEM、右侧与底部工作区
+- 影响范围：SSH 受控命令、会话广播、SQLite schema、Vault、SFTP/ZMODEM、左侧与底部工作区、服务器二级页
 
 ## 背景
 
@@ -32,7 +32,7 @@ session actor 增加最多 16 个目标的原子广播：持有注册表锁时�
 
 ZMODEM 通过远端 `rz --protect`/`sz --` 与 `zmodem2` 状态机工作，单任务总时限 10 分钟、位置上限 4 GiB，并复用 256 项/2 并发传输队列、取消、进度和本地 partial 替换。上传预检查与 `--protect` 双重拒绝覆盖；下载校验远端 advertised filename。绝对本地路径仍只存在于 Rust 原生选择器和 transfer operation。
 
-右侧栏在既有详情与动态 `ToolsWorkspace` 间切换：持久 SSH 终端 Ready 后通过同一个受限 monitor registry 自动启动详情摘要，直接展示 CPU、内存、SWAP、负载、可切换网卡的速率和磁盘容量；工具页只保留片段、历史和广播，不提供手动监控或诊断入口。底层固定探针仍由 Rust 保留，避免破坏详情监控的共享契约，但不作为用户可见工具。自动监控不覆盖交互 terminal channel，也不为临时快速连接创建额外连接。底部 Operations 增加编辑、压缩和 ZMODEM。两者与 Terminal 保持独立动态 chunk。终端断开时前端停止对应自动监控；Vault 手动或空闲锁定时 Rust 统一关闭 sessions、operations 和 tools，DOM 中不保留解密对象。
+详情与动态 `ToolsWorkspace` 在左侧栏切换：持久 SSH 终端 Ready 后通过同一个受限 monitor registry 自动启动详情摘要，直接展示 CPU、内存、SWAP、负载、可切换网卡的速率和磁盘容量；工具页只保留片段、历史和广播，不提供手动监控或诊断入口。连接树、分组和搜索迁入由顶栏按钮控制的服务器二级页，打开连接后返回主工作区；主工作区仅切换可见状态而不卸载 Terminal、RDP 或 Operations。底层固定探针仍由 Rust 保留，避免破坏详情监控的共享契约，但不作为用户可见工具。自动监控不覆盖交互 terminal channel，也不为临时快速连接创建额外连接。底部 Operations 增加编辑、压缩和 ZMODEM。两者与 Terminal 保持独立动态 chunk。终端断开时前端停止对应自动监控；Vault 手动或空闲锁定时 Rust 统一关闭 sessions、operations 和 tools，DOM 中不保留解密对象。
 
 ## 结果与限制
 

@@ -105,4 +105,4 @@ M6 migration 4 在单一 SQLite 事务内重建 `proxy_profiles` 的明文 kind 
 
 数据库损坏、密钥环不可用或认证标签失败时不得返回部分明文或自动重建空仓库。应用应进入只读恢复流程，先保存证据副本，再引导用户从加密备份恢复。
 
-应用外观的浅色、深色和跟随系统偏好不包含敏感数据，M1 将其保存在 WebView `localStorage`，不写入 Vault 或同步对象。连接树、面板尺寸和其他可能关联工作内容的布局状态继续由加密 `ui_state` 保存。`WorkspaceLayout.leftOpen` 记录连接栏是否展开，serde 默认值为 `true`，因此读取旧版布局无需 schema migration。
+应用外观的浅色、深色和跟随系统偏好不包含敏感数据，M1 将其保存在 WebView `localStorage`，不写入 Vault 或同步对象。面板尺寸和其他可能关联工作内容的布局状态继续由加密 `ui_state` 保存。2026-08-29 的主要布局调整复用 `WorkspaceLayout.rightWidth` 保存移到左侧的详情/工具栏宽度；`leftOpen` 与 `leftWidth` 仅为旧版布局反序列化兼容字段，不再控制当前 UI，因此无需 schema migration，也不会把旧布局读取失败误报为 Vault 损坏。

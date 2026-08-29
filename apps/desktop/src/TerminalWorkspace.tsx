@@ -167,6 +167,8 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
   const fitRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const lifecycleRef = useRef(0);
+  const connectAttemptRef = useRef(0);
+  const connectInFlightRef = useRef(false);
   const commandBufferRef = useRef("");
   const [state, setState] = useState<SessionState>("connecting");
   const [error, setError] = useState<string | null>(null);
@@ -212,7 +214,15 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
   }, [bridge, onReadyChange, paneId]);
 
   const connect = useCallback(async (generation = lifecycleRef.current, credential: string | null = null) => {
-    if (sessionIdRef.current) return;
+    if (sessionIdRef.current || connectInFlightRef.current) return;
+    const attempt = ++connectAttemptRef.current;
+    connectInFlightRef.current = true;
+    const acceptsEvent = (envelope: DesktopSessionEvent) => {
+      if (generation !== lifecycleRef.current || attempt !== connectAttemptRef.current) return;
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId && envelope.sessionId !== currentSessionId) return;
+      handleEvent(envelope);
+    };
     setError(null);
     setHostKey(null);
     setState("connecting");
@@ -227,8 +237,8 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
             allowLegacyAlgorithms: connection.allowLegacyAlgorithms,
             opensshFallback: connection.opensshFallback,
             credential,
-          }, terminalSize(), handleEvent)
-        : await bridge.openTerminal(connection.id, terminalSize(), handleEvent);
+          }, terminalSize(), acceptsEvent)
+        : await bridge.openTerminal(connection.id, terminalSize(), acceptsEvent);
       if (generation !== lifecycleRef.current || !terminalRef.current) {
         await bridge.closeTerminal(session.id).catch(() => undefined);
         return;
@@ -242,10 +252,12 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
       if (session.state === "ready") onReadyChange(paneId, session.id, true);
       onActivity(`${connection.name} 会话已创建`);
     } catch (reason) {
-      if (generation !== lifecycleRef.current) return;
+      if (generation !== lifecycleRef.current || attempt !== connectAttemptRef.current) return;
       const message = reason instanceof Error ? reason.message : typeof reason === "object" && reason && "message" in reason ? String(reason.message) : "会话创建失败";
       setError(message);
       setState("disconnected");
+    } finally {
+      if (attempt === connectAttemptRef.current) connectInFlightRef.current = false;
     }
   }, [bridge, connection, handleEvent, onActivity, terminalSize]);
 
@@ -285,6 +297,8 @@ function TerminalPane({ bridge, paneId, connection, profile, active, insertReque
     void connect(generation);
     return () => {
       lifecycleRef.current += 1;
+      connectAttemptRef.current += 1;
+      connectInFlightRef.current = false;
       resize.disconnect();
       input.dispose();
       terminal.dispose();
